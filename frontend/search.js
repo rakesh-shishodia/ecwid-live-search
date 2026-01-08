@@ -19,6 +19,17 @@ const CONFIG = {
 let _ecwidLiveSearchBoundInput = null;
 let _ecwidLiveSearchDocHandlerBound = false;
 
+let _ecwidLiveSearchActiveIndex = -1;
+let _ecwidLiveSearchLastQuery = '';
+
+function isDesktopPointer() {
+  try {
+    return window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  } catch {
+    return true;
+  }
+}
+
 function debounce(fn, wait) {
   let t;
   return (...args) => {
@@ -93,6 +104,72 @@ function ensureDropdown(anchorInput) {
 function hideDropdown(dd, { clear = true } = {}) {
   dd.style.display = 'none';
   if (clear) dd.innerHTML = '';
+  _ecwidLiveSearchActiveIndex = -1;
+}
+
+function getResultRows(dd) {
+  return Array.from(dd.querySelectorAll('a[data-ls-row="1"]'));
+}
+
+function setActiveRow(dd, index) {
+  const rows = getResultRows(dd);
+  if (!rows.length) {
+    _ecwidLiveSearchActiveIndex = -1;
+    return;
+  }
+
+  const clamped = Math.max(0, Math.min(index, rows.length - 1));
+  _ecwidLiveSearchActiveIndex = clamped;
+
+  rows.forEach((r, i) => {
+    if (i === clamped) {
+      r.dataset.lsActive = '1';
+      r.style.background = 'rgba(0,0,0,0.06)';
+    } else {
+      delete r.dataset.lsActive;
+      r.style.background = 'transparent';
+    }
+  });
+
+  // Ensure active row is visible
+  const active = rows[clamped];
+  try { active.scrollIntoView({ block: 'nearest' }); } catch {}
+}
+
+function getActiveHref(dd) {
+  const rows = getResultRows(dd);
+  if (_ecwidLiveSearchActiveIndex < 0 || _ecwidLiveSearchActiveIndex >= rows.length) return null;
+  const a = rows[_ecwidLiveSearchActiveIndex];
+  return a ? (a.href || a.getAttribute('href')) : null;
+}
+
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightNode(text, q) {
+  const s = String(text || '');
+  const query = String(q || '').trim();
+  if (!query) return document.createTextNode(s);
+
+  const re = new RegExp(escapeRegExp(query), 'ig');
+  const parts = s.split(re);
+  const matches = s.match(re);
+  if (!matches) return document.createTextNode(s);
+
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i]) frag.appendChild(document.createTextNode(parts[i]));
+    if (i < matches.length) {
+      const m = document.createElement('mark');
+      m.textContent = matches[i];
+      m.style.background = 'rgba(255, 230, 150, 0.85)';
+      m.style.padding = '0 2px';
+      m.style.borderRadius = '4px';
+      frag.appendChild(m);
+    }
+  }
+  return frag;
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -148,6 +225,19 @@ function itemRow({ title, subtitle, thumb, href, dataAttrs = {} }) {
     row.dataset[k] = String(v);
   }
 
+  // Mark as a navigable result row
+  row.dataset.lsRow = '1';
+
+  // Desktop UX: hovering a row updates the active index
+  row.addEventListener('mouseenter', () => {
+    if (!isDesktopPointer()) return;
+    const dd = document.getElementById('ecwid-live-search-dd');
+    if (!dd) return;
+    const rows = getResultRows(dd);
+    const idx = rows.indexOf(row);
+    if (idx >= 0) setActiveRow(dd, idx);
+  });
+
   const img = el('div', {
     style: {
       width: '42px',
@@ -173,7 +263,11 @@ function itemRow({ title, subtitle, thumb, href, dataAttrs = {} }) {
   }
 
   const text = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } });
-  text.appendChild(el('div', { style: { fontSize: '13px', fontWeight: '600' } }, [title]));
+  const titleDiv = el('div', { style: { fontSize: '13px', fontWeight: '600' } });
+  if (title && typeof title === 'object' && title.nodeType) titleDiv.appendChild(title);
+  else if (title && typeof title === 'object' && title instanceof DocumentFragment) titleDiv.appendChild(title);
+  else titleDiv.appendChild(document.createTextNode(String(title || '')));
+  text.appendChild(titleDiv);
   if (subtitle) text.appendChild(el('div', { style: { fontSize: '12px', opacity: '0.75' } }, [subtitle]));
 
   row.appendChild(img);
@@ -214,6 +308,9 @@ function render(dd, data) {
   const products = (data.products || []).slice(0, CONFIG.maxProducts);
   const categories = (data.categories || []).slice(0, CONFIG.maxCategories);
 
+  _ecwidLiveSearchLastQuery = (data && data.q) ? String(data.q) : '';
+  _ecwidLiveSearchActiveIndex = -1;
+
   dd.innerHTML = '';
 
   if (!products.length && !categories.length) {
@@ -227,7 +324,7 @@ function render(dd, data) {
     for (const p of products) {
       dd.appendChild(
         itemRow({
-          title: p.name || 'Product',
+          title: highlightNode(p.name || 'Product', _ecwidLiveSearchLastQuery),
           subtitle: p.price ? String(p.price) : p.sku ? `SKU: ${p.sku}` : '',
           thumb: p.thumb,
           href: buildProductHref(p),
@@ -242,7 +339,7 @@ function render(dd, data) {
     for (const c of categories) {
       dd.appendChild(
         itemRow({
-          title: c.name || 'Category',
+          title: highlightNode(c.name || 'Category', _ecwidLiveSearchLastQuery),
           subtitle: 'Category',
           thumb: null,
           href: buildCategoryHref(c),
@@ -250,6 +347,20 @@ function render(dd, data) {
         })
       );
     }
+  }
+
+  if (_ecwidLiveSearchLastQuery && (_ecwidLiveSearchLastQuery.trim().length >= CONFIG.minChars)) {
+    dd.appendChild(el('div', { style: { height: '1px', background: 'rgba(0,0,0,0.08)' } }));
+    const viewAllHref = `${window.location.origin}/#!/search?keyword=${encodeURIComponent(_ecwidLiveSearchLastQuery)}`;
+    dd.appendChild(
+      itemRow({
+        title: `View all results for "${_ecwidLiveSearchLastQuery}" →`,
+        subtitle: '',
+        thumb: null,
+        href: viewAllHref,
+        dataAttrs: { ecwidType: 'search' },
+      })
+    );
   }
 
   dd.style.display = 'block';
@@ -332,7 +443,38 @@ function initLiveSearchOnce() {
   }
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideDropdown(dd);
+    if (e.key === 'Escape') {
+      hideDropdown(dd);
+      return;
+    }
+
+    // Desktop-only keyboard navigation
+    if (!isDesktopPointer()) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const rows = getResultRows(dd);
+      if (!rows.length) return;
+      const next = (_ecwidLiveSearchActiveIndex < 0) ? 0 : _ecwidLiveSearchActiveIndex + 1;
+      setActiveRow(dd, next);
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const rows = getResultRows(dd);
+      if (!rows.length) return;
+      const prev = (_ecwidLiveSearchActiveIndex <= 0) ? 0 : _ecwidLiveSearchActiveIndex - 1;
+      setActiveRow(dd, prev);
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      const href = getActiveHref(dd);
+      if (!href) return;
+      e.preventDefault();
+      window.location.assign(href);
+    }
   });
 
   return true;
