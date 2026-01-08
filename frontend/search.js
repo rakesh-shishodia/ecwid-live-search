@@ -114,6 +114,7 @@ function ensureDropdown(anchorInput) {
 }
 
 function hideDropdown(dd, { clear = true } = {}) {
+  hideInlineLoading(dd);
   dd.style.display = 'none';
   if (clear) dd.innerHTML = '';
   _ecwidLiveSearchActiveIndex = -1;
@@ -227,6 +228,32 @@ function renderLoading(dd) {
   dd.style.display = 'block';
 }
 
+function showInlineLoading(dd) {
+  // Non-destructive loader: keep current results and show a subtle footer.
+  let footer = dd.querySelector('[data-ls-loading="1"]');
+  if (!footer) {
+    footer = el(
+      'div',
+      {
+        style: {
+          padding: '8px 12px',
+          fontSize: '12px',
+          opacity: '0.75',
+          borderTop: '1px solid rgba(0,0,0,0.08)',
+        },
+      },
+      ['Searching…']
+    );
+    footer.setAttribute('data-ls-loading', '1');
+    dd.appendChild(footer);
+  }
+}
+
+function hideInlineLoading(dd) {
+  const footer = dd.querySelector('[data-ls-loading="1"]');
+  if (footer) footer.remove();
+}
+
 function itemRow({ title, subtitle, thumb, href, dataAttrs = {} }) {
   const row = el('a', {
     href,
@@ -335,10 +362,14 @@ function render(dd, data) {
   _ecwidLiveSearchLastQuery = (data && data.q) ? String(data.q) : '';
   _ecwidLiveSearchActiveIndex = -1;
 
+  // STEP 3.1: Ensure inline loading is hidden before clearing
+  hideInlineLoading(dd);
   dd.innerHTML = '';
 
   if (!products.length && !categories.length) {
     dd.appendChild(el('div', { style: { padding: '12px', fontSize: '13px', opacity: '0.8' } }, ['No results']));
+    // STEP 3.2: Ensure inline loading is hidden before showing
+    hideInlineLoading(dd);
     dd.style.display = 'block';
     return;
   }
@@ -374,6 +405,8 @@ function render(dd, data) {
   }
 
   dd.dataset.lsHasResults = '1';
+  // STEP 3.2: Ensure inline loading is hidden before showing
+  hideInlineLoading(dd);
   dd.style.display = 'block';
 }
 
@@ -399,8 +432,11 @@ function initLiveSearchOnce() {
     abort = new AbortController();
 
     const loadingTimer = setTimeout(() => {
-      // Only show skeleton if we don't already have results visible.
-      if (!dd.dataset.lsHasResults) {
+      if (dd.dataset.lsHasResults) {
+        // Solution A: keep results visible; show subtle footer loader.
+        showInlineLoading(dd);
+      } else {
+        // First load (no results yet): show the small skeleton.
         renderLoading(dd);
       }
     }, 120);
@@ -408,9 +444,11 @@ function initLiveSearchOnce() {
     try {
       const data = await fetchResults(q, abort.signal);
       clearTimeout(loadingTimer);
+      hideInlineLoading(dd);
       render(dd, data);
     } catch {
       clearTimeout(loadingTimer);
+      hideInlineLoading(dd);
       hideDropdown(dd);
     }
   }, CONFIG.debounceMs);
