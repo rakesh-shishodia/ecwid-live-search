@@ -16,6 +16,9 @@ const CONFIG = {
   dropdownOffsetPx: 8,
 };
 
+let _ecwidLiveSearchBoundInput = null;
+let _ecwidLiveSearchDocHandlerBound = false;
+
 function debounce(fn, wait) {
   let t;
   return (...args) => {
@@ -248,8 +251,9 @@ function initLiveSearchOnce() {
   const input = findSearchInput();
   if (!input) return false;
 
-  if (input.dataset.ecwidLiveSearchInit === '1') return true;
-  input.dataset.ecwidLiveSearchInit = '1';
+  // Ecwid can replace the search input node (especially on mobile). Re-bind if it changes.
+  if (_ecwidLiveSearchBoundInput === input) return true;
+  _ecwidLiveSearchBoundInput = input;
 
   const dd = ensureDropdown(input);
   let abort = null;
@@ -274,11 +278,49 @@ function initLiveSearchOnce() {
 
   input.addEventListener('input', run);
 
-  document.addEventListener('click', (e) => {
-    if (e.target === input) return;
-    if (dd.contains(e.target)) return;
-    hideDropdown(dd);
-  });
+  if (!_ecwidLiveSearchDocHandlerBound) {
+    _ecwidLiveSearchDocHandlerBound = true;
+
+    document.addEventListener('click', (e) => {
+      const activeInput = _ecwidLiveSearchBoundInput;
+      const dropdown = document.getElementById('ecwid-live-search-dd');
+      if (!activeInput || !dropdown) return;
+
+      if (e.target === activeInput) return;
+
+      // If click/tap is inside dropdown, allow link navigation to occur first (mobile-safe)
+      if (dropdown.contains(e.target)) {
+        setTimeout(() => hideDropdown(dropdown), 150);
+        return;
+      }
+
+      hideDropdown(dropdown);
+    });
+  }
+
+  // Extra mobile safety: prevent document click from tearing down before <a> navigation completes
+  dd.addEventListener(
+    'click',
+    (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('a') : null;
+      if (!a) return;
+      // Let navigation proceed; just hide shortly after
+      setTimeout(() => hideDropdown(dd), 150);
+      e.stopPropagation();
+    },
+    true
+  );
+
+  dd.addEventListener(
+    'touchstart',
+    (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('a') : null;
+      if (!a) return;
+      // Do not preventDefault; just stop propagation so document handlers don't interfere
+      e.stopPropagation();
+    },
+    { capture: true, passive: true }
+  );
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') hideDropdown(dd);
