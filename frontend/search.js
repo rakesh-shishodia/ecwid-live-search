@@ -127,7 +127,7 @@ function sectionTitle(txt) {
   );
 }
 
-function itemRow({ title, subtitle, thumb, href }) {
+function itemRow({ title, subtitle, thumb, href, dataAttrs = {} }) {
   const row = el('a', {
     href,
     style: {
@@ -141,6 +141,12 @@ function itemRow({ title, subtitle, thumb, href }) {
     onmouseenter: (e) => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)'),
     onmouseleave: (e) => (e.currentTarget.style.background = 'transparent'),
   });
+
+  // Attach metadata for Ecwid navigation
+  for (const [k, v] of Object.entries(dataAttrs)) {
+    if (v === null || v === undefined) continue;
+    row.dataset[k] = String(v);
+  }
 
   const img = el('div', {
     style: {
@@ -225,6 +231,7 @@ function render(dd, data) {
           subtitle: p.price ? String(p.price) : p.sku ? `SKU: ${p.sku}` : '',
           thumb: p.thumb,
           href: buildProductHref(p),
+          dataAttrs: { ecwidType: 'product', ecwidId: p.id },
         })
       );
     }
@@ -239,6 +246,7 @@ function render(dd, data) {
           subtitle: 'Category',
           thumb: null,
           href: buildCategoryHref(c),
+          dataAttrs: { ecwidType: 'category', ecwidId: c.id },
         })
       );
     }
@@ -308,17 +316,33 @@ function initLiveSearchOnce() {
         const a = e.target && e.target.closest ? e.target.closest('a') : null;
         if (!a) return;
 
-        // Deterministic navigation (fixes mobile click delegation / DOM-teardown issues)
-        const href = a.getAttribute('href');
-        if (href) {
-          window.location.href = href;
+        // Prefer Ecwid storefront navigation (more reliable on Instant Site / mobile)
+        const type = a.dataset.ecwidType;
+        const id = a.dataset.ecwidId;
+
+        try {
+          if (window.Ecwid && typeof window.Ecwid.openPage === 'function' && type && id) {
+            // Ecwid expects specific page identifiers
+            if (type === 'product') window.Ecwid.openPage('product', { id: Number(id) });
+            else if (type === 'category') window.Ecwid.openPage('category', { id: Number(id) });
+            else {
+              const href = a.getAttribute('href');
+              if (href) window.location.href = href;
+            }
+          } else {
+            const href = a.getAttribute('href');
+            if (href) window.location.href = href;
+          }
+        } catch {
+          const href = a.getAttribute('href');
+          if (href) window.location.href = href;
         }
 
         // Prevent any other handlers from interfering
         e.preventDefault();
         e.stopPropagation();
 
-        // Hide dropdown without clearing DOM to avoid cancelling navigation in some mobile browsers
+        // Hide dropdown without clearing DOM; navigation will change the page anyway
         setTimeout(() => hideDropdown(dd, { clear: false }), 0);
       },
       true
@@ -344,6 +368,21 @@ function initLiveSearchOnce() {
 
   return true;
 }
+
+(function bindEcwidLifecycle() {
+  // Re-init when Ecwid changes pages (Instant Site SPA)
+  if (window.Ecwid && window.Ecwid.OnPageLoaded && typeof window.Ecwid.OnPageLoaded.add === 'function') {
+    if (!window.__ecwidLiveSearchOnPageLoadedBound) {
+      window.__ecwidLiveSearchOnPageLoadedBound = true;
+      window.Ecwid.OnPageLoaded.add(function () {
+        // slight delay to allow DOM to settle
+        setTimeout(() => {
+          try { initLiveSearchOnce(); } catch {}
+        }, 50);
+      });
+    }
+  }
+})();
 
 (function boot() {
   const startedAt = Date.now();
