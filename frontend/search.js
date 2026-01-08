@@ -316,50 +316,18 @@ function initLiveSearchOnce() {
         const a = e.target && e.target.closest ? e.target.closest('a') : null;
         if (!a) return;
 
-        // Prefer Ecwid storefront navigation (more reliable on Instant Site / mobile)
-        const type = a.dataset.ecwidType;
-        const id = a.dataset.ecwidId;
+        // Deterministic navigation: use the actual href. This avoids Ecwid Storefront API CORS issues.
+        const href = a.href || a.getAttribute('href');
+        if (!href) return;
 
-        let handledByEcwid = false;
+        // Prevent any other handlers from interfering, then navigate.
+        e.preventDefault();
+        e.stopPropagation();
 
-        try {
-          if (window.Ecwid && typeof window.Ecwid.openPage === 'function' && type && id) {
-            // Ecwid expects specific page identifiers
-            if (type === 'product') {
-              window.Ecwid.openPage('product', { id: Number(id) });
-              handledByEcwid = true;
-              console.log('[LiveSearch] NAV via Ecwid.openPage:', type, id);
-            } else if (type === 'category') {
-              window.Ecwid.openPage('category', { id: Number(id) });
-              handledByEcwid = true;
-              console.log('[LiveSearch] NAV via Ecwid.openPage:', type, id);
-            }
-          }
-        } catch {
-          handledByEcwid = false;
-        }
-
-        if (!handledByEcwid) {
-          console.log('[LiveSearch] NAV via native <a> fallback:', a.getAttribute('href'));
-        }
-
-        // IMPORTANT: If we didn't navigate via Ecwid, do NOT preventDefault.
-        // Let the native <a href> navigation happen (most reliable fallback on mobile).
+        // Use assign() so it behaves like a normal link navigation.
+        window.location.assign(href);
       },
       true
-    );
-  }
-
-  if (!dd.dataset.ecwidLiveSearchTouchBound) {
-    dd.dataset.ecwidLiveSearchTouchBound = '1';
-
-    dd.addEventListener(
-      'touchstart',
-      (e) => {
-        // Stop propagation for any touch inside dropdown to avoid document-level races
-        e.stopPropagation();
-      },
-      { capture: true, passive: true }
     );
   }
 
