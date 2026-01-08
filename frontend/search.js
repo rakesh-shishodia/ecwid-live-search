@@ -349,19 +349,6 @@ function render(dd, data) {
     }
   }
 
-  if (_ecwidLiveSearchLastQuery && (_ecwidLiveSearchLastQuery.trim().length >= CONFIG.minChars)) {
-    dd.appendChild(el('div', { style: { height: '1px', background: 'rgba(0,0,0,0.08)' } }));
-    const viewAllHref = `${window.location.origin}/#!/search?keyword=${encodeURIComponent(_ecwidLiveSearchLastQuery)}`;
-    dd.appendChild(
-      itemRow({
-        title: `View all results for "${_ecwidLiveSearchLastQuery}" →`,
-        subtitle: '',
-        thumb: null,
-        href: viewAllHref,
-        dataAttrs: { ecwidType: 'search' },
-      })
-    );
-  }
 
   dd.style.display = 'block';
 }
