@@ -555,6 +555,12 @@ function initLiveSearchOnce() {
 
 (function boot() {
   const startedAt = Date.now();
+
+  // Refinement 2: warm up the Worker (and its category cache) in the background
+  try {
+    fetch(`${WORKER_BASE_URL.replace(/\/$/, '')}/warm`, { method: 'GET', mode: 'cors' }).catch(() => {});
+  } catch {}
+
   const timer = setInterval(() => {
     const ok = initLiveSearchOnce();
     if (ok) {
