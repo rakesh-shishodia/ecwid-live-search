@@ -198,6 +198,12 @@ export default {
         return await handleSearch(request, env);
       }
 
+      // Warmup endpoint: primes category cache (reduces first-search latency)
+      if (url.pathname === '/warm' && request.method === 'GET') {
+        await getCategories(env);
+        return jsonResponse({ ok: true, warmed: true }, { origin });
+      }
+
       if (url.pathname === '/' && request.method === 'GET') {
         return jsonResponse({ ok: true, service: 'ecwid-live-search-worker' }, { origin });
       }
