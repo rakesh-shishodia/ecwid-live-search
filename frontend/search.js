@@ -307,9 +307,19 @@ function initLiveSearchOnce() {
       (e) => {
         const a = e.target && e.target.closest ? e.target.closest('a') : null;
         if (!a) return;
-        // Do not hide/clear here; let the browser navigate naturally.
-        // Stopping propagation prevents document click from closing it prematurely.
+
+        // Deterministic navigation (fixes mobile click delegation / DOM-teardown issues)
+        const href = a.getAttribute('href');
+        if (href) {
+          window.location.href = href;
+        }
+
+        // Prevent any other handlers from interfering
+        e.preventDefault();
         e.stopPropagation();
+
+        // Hide dropdown without clearing DOM to avoid cancelling navigation in some mobile browsers
+        setTimeout(() => hideDropdown(dd, { clear: false }), 0);
       },
       true
     );
@@ -321,9 +331,7 @@ function initLiveSearchOnce() {
     dd.addEventListener(
       'touchstart',
       (e) => {
-        const a = e.target && e.target.closest ? e.target.closest('a') : null;
-        if (!a) return;
-        // Do not preventDefault; just stop propagation so document handlers don't interfere
+        // Stop propagation for any touch inside dropdown to avoid document-level races
         e.stopPropagation();
       },
       { capture: true, passive: true }
@@ -346,6 +354,7 @@ function initLiveSearchOnce() {
       // Keeping this running allows automatic re-bind.
       return;
     }
-    if (Date.now() - startedAt > 30000) clearInterval(timer);
-  }, 300);
+    // Keep polling indefinitely (low overhead). Ecwid can replace the search input long after page load.
+    // If you want to reduce overhead later, we can switch to MutationObserver.
+  }, 800);
 })();
