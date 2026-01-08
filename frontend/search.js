@@ -320,30 +320,34 @@ function initLiveSearchOnce() {
         const type = a.dataset.ecwidType;
         const id = a.dataset.ecwidId;
 
+        let handledByEcwid = false;
+
         try {
           if (window.Ecwid && typeof window.Ecwid.openPage === 'function' && type && id) {
             // Ecwid expects specific page identifiers
-            if (type === 'product') window.Ecwid.openPage('product', { id: Number(id) });
-            else if (type === 'category') window.Ecwid.openPage('category', { id: Number(id) });
-            else {
-              const href = a.getAttribute('href');
-              if (href) window.location.href = href;
+            if (type === 'product') {
+              window.Ecwid.openPage('product', { id: Number(id) });
+              handledByEcwid = true;
+            } else if (type === 'category') {
+              window.Ecwid.openPage('category', { id: Number(id) });
+              handledByEcwid = true;
             }
-          } else {
-            const href = a.getAttribute('href');
-            if (href) window.location.href = href;
           }
         } catch {
-          const href = a.getAttribute('href');
-          if (href) window.location.href = href;
+          handledByEcwid = false;
         }
 
-        // Prevent any other handlers from interfering
-        e.preventDefault();
-        e.stopPropagation();
+        if (handledByEcwid) {
+          // We handled navigation, so stop native link behavior and any other handlers.
+          e.preventDefault();
+          e.stopPropagation();
+          // Optional: close dropdown (don’t clear DOM) since SPA navigation will change content.
+          setTimeout(() => hideDropdown(dd, { clear: false }), 0);
+          return;
+        }
 
-        // Hide dropdown without clearing DOM; navigation will change the page anyway
-        setTimeout(() => hideDropdown(dd, { clear: false }), 0);
+        // IMPORTANT: If we didn't navigate via Ecwid, do NOT preventDefault.
+        // Let the native <a href> navigation happen (most reliable fallback on mobile).
       },
       true
     );
