@@ -90,9 +90,9 @@ function ensureDropdown(anchorInput) {
   return dd;
 }
 
-function hideDropdown(dd) {
+function hideDropdown(dd, { clear = true } = {}) {
   dd.style.display = 'none';
-  dd.innerHTML = '';
+  if (clear) dd.innerHTML = '';
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -288,9 +288,9 @@ function initLiveSearchOnce() {
 
       if (e.target === activeInput) return;
 
-      // If click/tap is inside dropdown, allow link navigation to occur first (mobile-safe)
+      // If click/tap is inside dropdown, do NOT hide/clear here.
+      // On mobile, destroying the tapped <a> can cancel navigation.
       if (dropdown.contains(e.target)) {
-        setTimeout(() => hideDropdown(dropdown), 150);
         return;
       }
 
@@ -298,29 +298,37 @@ function initLiveSearchOnce() {
     });
   }
 
-  // Extra mobile safety: prevent document click from tearing down before <a> navigation completes
-  dd.addEventListener(
-    'click',
-    (e) => {
-      const a = e.target && e.target.closest ? e.target.closest('a') : null;
-      if (!a) return;
-      // Let navigation proceed; just hide shortly after
-      setTimeout(() => hideDropdown(dd), 150);
-      e.stopPropagation();
-    },
-    true
-  );
+  // Extra mobile safety: avoid tearing down dropdown during <a> tap/click sequence
+  if (!dd.dataset.ecwidLiveSearchClickBound) {
+    dd.dataset.ecwidLiveSearchClickBound = '1';
 
-  dd.addEventListener(
-    'touchstart',
-    (e) => {
-      const a = e.target && e.target.closest ? e.target.closest('a') : null;
-      if (!a) return;
-      // Do not preventDefault; just stop propagation so document handlers don't interfere
-      e.stopPropagation();
-    },
-    { capture: true, passive: true }
-  );
+    dd.addEventListener(
+      'click',
+      (e) => {
+        const a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a) return;
+        // Do not hide/clear here; let the browser navigate naturally.
+        // Stopping propagation prevents document click from closing it prematurely.
+        e.stopPropagation();
+      },
+      true
+    );
+  }
+
+  if (!dd.dataset.ecwidLiveSearchTouchBound) {
+    dd.dataset.ecwidLiveSearchTouchBound = '1';
+
+    dd.addEventListener(
+      'touchstart',
+      (e) => {
+        const a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a) return;
+        // Do not preventDefault; just stop propagation so document handlers don't interfere
+        e.stopPropagation();
+      },
+      { capture: true, passive: true }
+    );
+  }
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') hideDropdown(dd);
@@ -334,7 +342,8 @@ function initLiveSearchOnce() {
   const timer = setInterval(() => {
     const ok = initLiveSearchOnce();
     if (ok) {
-      clearInterval(timer);
+      // Do NOT stop polling. Ecwid may replace the search input after interactions (especially on mobile).
+      // Keeping this running allows automatic re-bind.
       return;
     }
     if (Date.now() - startedAt > 30000) clearInterval(timer);
