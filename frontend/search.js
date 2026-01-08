@@ -216,6 +216,15 @@ function sectionTitle(txt) {
   );
 }
 
+function renderLoading(dd) {
+  dd.innerHTML = '';
+  dd.appendChild(sectionTitle('Search'));
+  dd.appendChild(
+    el('div', { style: { padding: '12px', fontSize: '13px', opacity: '0.8' } }, ['Searching…'])
+  );
+  dd.style.display = 'block';
+}
+
 function itemRow({ title, subtitle, thumb, href, dataAttrs = {} }) {
   const row = el('a', {
     href,
@@ -386,10 +395,16 @@ function initLiveSearchOnce() {
     if (abort) abort.abort();
     abort = new AbortController();
 
+    const loadingTimer = setTimeout(() => {
+      renderLoading(dd);
+    }, 120);
+
     try {
       const data = await fetchResults(q, abort.signal);
+      clearTimeout(loadingTimer);
       render(dd, data);
     } catch {
+      clearTimeout(loadingTimer);
       hideDropdown(dd);
     }
   }, CONFIG.debounceMs);
