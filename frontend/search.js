@@ -8,18 +8,6 @@
 // ✅ Your deployed Worker base URL
 const WORKER_BASE_URL = 'https://ecwid-live-search.shishodia-rakesh.workers.dev';
 
-// HelpfulCrowd product rating widget script (loads once)
-const HC_PRODUCT_RATING_SCRIPT_SRC = 'https://app.helpfulcrowd.com/f/koS4zR/widgets/product_rating.js';
-function ensureHelpfulCrowdProductRatingScript() {
-  // If HelpfulCrowd script is already present, do nothing
-  const existing = document.querySelector(`script[src="${HC_PRODUCT_RATING_SCRIPT_SRC}"]`);
-  if (existing) return;
-
-  const s = document.createElement('script');
-  s.src = HC_PRODUCT_RATING_SCRIPT_SRC;
-  s.defer = true;
-  document.head.appendChild(s);
-}
 
 const CONFIG = {
   minChars: 2,
@@ -228,7 +216,7 @@ function sectionTitle(txt) {
   );
 }
 
-function itemRow({ title, subtitle, thumb, href, dataAttrs = {}, hcProductId = null }) {
+function itemRow({ title, subtitle, thumb, href, dataAttrs = {} }) {
   const row = el('a', {
     href,
     style: {
@@ -294,15 +282,6 @@ function itemRow({ title, subtitle, thumb, href, dataAttrs = {}, hcProductId = n
   text.appendChild(titleDiv);
   if (subtitle) text.appendChild(el('div', { style: { fontSize: '12px', opacity: '0.75' } }, [subtitle]));
 
-  // Optional: HelpfulCrowd product rating (renders stars if the widget script is present)
-  if (hcProductId) {
-    const hcWrap = el('div', { class: 'hc-widget' });
-    const hcInner = el('div');
-    hcInner.setAttribute('data-hc', 'product-rating');
-    hcInner.setAttribute('data-hc-id', String(hcProductId));
-    hcWrap.appendChild(hcInner);
-    text.appendChild(hcWrap);
-  }
 
   row.appendChild(img);
   row.appendChild(text);
@@ -363,7 +342,6 @@ function render(dd, data) {
           thumb: p.thumb,
           href: buildProductHref(p),
           dataAttrs: { ecwidType: 'product', ecwidId: p.id },
-          hcProductId: p.id,
         })
       );
     }
@@ -384,7 +362,6 @@ function render(dd, data) {
     }
   }
 
-  ensureHelpfulCrowdProductRatingScript();
   dd.style.display = 'block';
 }
 
