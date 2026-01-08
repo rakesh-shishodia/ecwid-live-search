@@ -117,6 +117,7 @@ function hideDropdown(dd, { clear = true } = {}) {
   dd.style.display = 'none';
   if (clear) dd.innerHTML = '';
   _ecwidLiveSearchActiveIndex = -1;
+  delete dd.dataset.lsHasResults;
 }
 
 function getResultRows(dd) {
@@ -222,6 +223,7 @@ function renderLoading(dd) {
   dd.appendChild(
     el('div', { style: { padding: '12px', fontSize: '13px', opacity: '0.8' } }, ['Searching…'])
   );
+  delete dd.dataset.lsHasResults;
   dd.style.display = 'block';
 }
 
@@ -371,6 +373,7 @@ function render(dd, data) {
     }
   }
 
+  dd.dataset.lsHasResults = '1';
   dd.style.display = 'block';
 }
 
@@ -396,7 +399,10 @@ function initLiveSearchOnce() {
     abort = new AbortController();
 
     const loadingTimer = setTimeout(() => {
-      renderLoading(dd);
+      // Only show skeleton if we don't already have results visible.
+      if (!dd.dataset.lsHasResults) {
+        renderLoading(dd);
+      }
     }, 120);
 
     try {
