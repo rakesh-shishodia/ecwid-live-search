@@ -85,7 +85,16 @@ async function getCategories(env) {
     return _catCache.items;
   }
 
-  const data = await ecwidFetch('/categories?hidden_categories=false&limit=250', env);
+  // Request image-related fields explicitly so category thumbnails are available when set in Ecwid.
+  // Ecwid supports `responseFields` to limit/shape the response.
+  const responseFields = encodeURIComponent(
+    'items(id,name,url,thumbnailUrl,imageUrl,image(url,url160px,url320px)),count,limit,offset,total'
+  );
+
+  const data = await ecwidFetch(
+    `/categories?hidden_categories=false&limit=250&responseFields=${responseFields}`,
+    env
+  );
   const items = Array.isArray(data?.items) ? data.items : [];
 
   _catCache = { ts: now, items };
@@ -99,10 +108,19 @@ function matchCategories(allCats, q, limit = 6) {
     const name = (c?.name || '').toString();
     if (!name) continue;
     if (name.toLowerCase().includes(needle)) {
+      const thumb =
+        c.thumbnailUrl ||
+        c.imageUrl ||
+        c.image?.url160px ||
+        c.image?.url320px ||
+        c.image?.url ||
+        null;
+
       out.push({
         id: c.id,
         name,
         url: c.url || null,
+        thumb,
       });
       if (out.length >= limit) break;
     }
