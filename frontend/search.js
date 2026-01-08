@@ -328,22 +328,19 @@ function initLiveSearchOnce() {
             if (type === 'product') {
               window.Ecwid.openPage('product', { id: Number(id) });
               handledByEcwid = true;
+              console.log('[LiveSearch] NAV via Ecwid.openPage:', type, id);
             } else if (type === 'category') {
               window.Ecwid.openPage('category', { id: Number(id) });
               handledByEcwid = true;
+              console.log('[LiveSearch] NAV via Ecwid.openPage:', type, id);
             }
           }
         } catch {
           handledByEcwid = false;
         }
 
-        if (handledByEcwid) {
-          // We handled navigation, so stop native link behavior and any other handlers.
-          e.preventDefault();
-          e.stopPropagation();
-          // Optional: close dropdown (don’t clear DOM) since SPA navigation will change content.
-          setTimeout(() => hideDropdown(dd, { clear: false }), 0);
-          return;
+        if (!handledByEcwid) {
+          console.log('[LiveSearch] NAV via native <a> fallback:', a.getAttribute('href'));
         }
 
         // IMPORTANT: If we didn't navigate via Ecwid, do NOT preventDefault.
