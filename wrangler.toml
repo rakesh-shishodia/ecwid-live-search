@@ -1,3 +1,6 @@
 name = "ecwid-live-search"
 main = "worker/index.js"
 compatibility_date = "2026-01-08"
+
+[vars]
+ECWID_STORE_ID = "2442119"
