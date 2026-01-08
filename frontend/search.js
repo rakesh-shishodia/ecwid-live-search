@@ -16,6 +16,17 @@ const CONFIG = {
   dropdownOffsetPx: 8,
 };
 
+// Fallback icon for categories when no image is provided
+const CATEGORY_FALLBACK_THUMB =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect x="10" y="18" width="44" height="34" rx="8" fill="%23E9EEF5"/>
+      <path d="M18 18c0-3.314 2.686-6 6-6h10l4 4h8c3.314 0 6 2.686 6 6" fill="%23D7DFEA"/>
+      <path d="M18 24h28" stroke="%23A9B6C6" stroke-width="3" stroke-linecap="round"/>
+    </svg>`
+  );
+
 let _ecwidLiveSearchBoundInput = null;
 let _ecwidLiveSearchDocHandlerBound = false;
 
@@ -341,7 +352,7 @@ function render(dd, data) {
         itemRow({
           title: highlightNode(c.name || 'Category', _ecwidLiveSearchLastQuery),
           subtitle: 'Category',
-          thumb: null,
+          thumb: c.thumb || CATEGORY_FALLBACK_THUMB,
           href: buildCategoryHref(c),
           dataAttrs: { ecwidType: 'category', ecwidId: c.id },
         })
