@@ -32,9 +32,50 @@ const CATEGORY_FALLBACK_THUMB =
 let _ecwidLiveSearchBoundInput = null;
 let _ecwidLiveSearchDocHandlerBound = false;
 
+
 let _ecwidLiveSearchActiveIndex = -1;
 let _ecwidLiveSearchLastQuery = '';
 let _ecwidLiveSearchAnchorInput = null;
+
+// STEP (Polling) state: fallback when Ecwid suppresses input/keyup events on some routes
+let _lsPollTimer = null;
+let _lsPollInput = null;
+let _lsPollLastValue = '';
+
+function startSearchPolling(input) {
+  // Restart if switching inputs
+  if (_lsPollInput !== input) {
+    _lsPollInput = input;
+    _lsPollLastValue = input && typeof input.value === 'string' ? input.value : '';
+  }
+
+  if (_lsPollTimer) return;
+
+  _lsPollTimer = setInterval(() => {
+    const el = _lsPollInput;
+    if (!el || el !== document.activeElement) return;
+
+    const v = typeof el.value === 'string' ? el.value : '';
+    if (v === _lsPollLastValue) return;
+    _lsPollLastValue = v;
+
+    // Trigger only when query is meaningful
+    if (v.trim().length < CONFIG.minChars) return;
+
+    // Ensure runner exists and invoke it
+    try { if (typeof el._lsRun !== 'function') initLiveSearchOnce(); } catch {}
+    if (typeof el._lsRun === 'function') {
+      el._lsRun();
+    }
+  }, 150);
+}
+
+function stopSearchPolling() {
+  if (_lsPollTimer) {
+    clearInterval(_lsPollTimer);
+    _lsPollTimer = null;
+  }
+}
 
 function isDesktopPointer() {
   try {
