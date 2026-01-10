@@ -518,6 +518,21 @@ function initLiveSearchOnce() {
 
   input.addEventListener('input', run);
 
+  // STEP 1 FIX: key-based triggers (Ecwid-safe)
+  input.addEventListener('keyup', (e) => {
+    // Ignore navigation keys
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape') return;
+    if (typeof input._lsRun === 'function') {
+      input._lsRun();
+    }
+  });
+
+  input.addEventListener('compositionend', () => {
+    if (typeof input._lsRun === 'function') {
+      input._lsRun();
+    }
+  });
+
   if (!_ecwidLiveSearchDocHandlerBound) {
     _ecwidLiveSearchDocHandlerBound = true;
 
