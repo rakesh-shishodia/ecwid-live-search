@@ -59,7 +59,6 @@ function debounce(fn, wait) {
   };
 }
 
-
 function isVisible(el) {
   if (!el) return false;
   if (el.disabled) return false;
@@ -125,12 +124,10 @@ function ensureDropdown(anchorInput) {
 
 function positionDropdown(anchorInput) {
   if (!LS.dd || !anchorInput) return;
-  try {
-    const r = anchorInput.getBoundingClientRect();
-    LS.dd.style.left = `${Math.round(r.left + window.scrollX)}px`;
-    LS.dd.style.top = `${Math.round(r.bottom + window.scrollY + CONFIG.dropdownOffsetPx)}px`;
-    LS.dd.style.width = `${Math.round(r.width)}px`;
-  } catch {}
+  const r = anchorInput.getBoundingClientRect();
+  LS.dd.style.left = `${Math.round(r.left + window.scrollX)}px`;
+  LS.dd.style.top = `${Math.round(r.bottom + window.scrollY + CONFIG.dropdownOffsetPx)}px`;
+  LS.dd.style.width = `${Math.round(r.width)}px`;
 }
 
 function hideDropdown({ clear = true } = {}) {
