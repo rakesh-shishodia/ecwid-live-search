@@ -440,9 +440,10 @@ function initLiveSearchOnce() {
     currentInput: input,
   });
 
-  // TEMP DIAGNOSTIC: keep the original behavior, but log when we skip init
-  if (_ecwidLiveSearchBoundInput === input) {
-    console.log('[LS] EARLY RETURN — skipping init');
+  const dropdownIsAlive = existingDd && document.body.contains(existingDd);
+
+  if (_ecwidLiveSearchBoundInput === input && dropdownIsAlive) {
+    console.log('[LS] EARLY RETURN — skipping init (dropdown alive)');
     return true;
   }
 
