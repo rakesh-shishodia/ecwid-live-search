@@ -55,29 +55,43 @@ function $(sel, root = document) {
 }
 
 function findSearchInput() {
+  // Prefer the actual header search field used by your theme
   const selectors = [
-    'input[type="search"]',
+    'input.ins-header__search-field[name="keyword"]',
+    'form[role="search"] input.ins-header__search-field[name="keyword"]',
     'input[name="keyword"]',
-    'form[action*="search"] input',
-    '.ec-store__search input',
-    '.ecwid-search input',
-    '.search input',
+    'form[action*="search"] input[name="keyword"]',
+    '.ec-store__search input[name="keyword"]',
+    '.ecwid-search input[name="keyword"]',
+    // Fallbacks
+    'input[type="search"]',
   ];
+
+  const isVisible = (el) => {
+    if (!el) return false;
+    if (el.disabled) return false;
+    // offsetParent null usually means display:none or not in layout
+    if (el.offsetParent === null) return false;
+    const cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (cs && (cs.visibility === 'hidden' || cs.display === 'none')) return false;
+    return true;
+  };
 
   for (const s of selectors) {
     const el = $(s);
-    if (el && el.tagName === 'INPUT') return el;
+    if (el && el.tagName === 'INPUT' && isVisible(el)) return el;
   }
 
+  // Final fallback: heuristics across all inputs, but only visible ones.
   const inputs = Array.from(document.querySelectorAll('input'));
   return (
     inputs.find((i) => {
+      if (!isVisible(i)) return false;
       const type = (i.getAttribute('type') || '').toLowerCase();
       const name = (i.getAttribute('name') || '').toLowerCase();
       const placeholder = (i.getAttribute('placeholder') || '').toLowerCase();
       const looks = type === 'search' || name.includes('search') || name.includes('keyword') || placeholder.includes('search');
-      const visible = i.offsetParent !== null;
-      return looks && visible;
+      return looks;
     }) || null
   );
 }
