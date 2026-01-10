@@ -1,26 +1,29 @@
 /**
- * Ecwid Live Search – storefront injection script (MVP)
+ * 3DP Live Search – Ecwid storefront injection script
  *
- * Loads on your Ecwid storefront and adds a typeahead dropdown under the existing search input.
- * IMPORTANT: This script must NOT contain any Ecwid secret token. It talks only to your Worker.
+ * Key design choice:
+ * - Do NOT rely on input/keyup events (Ecwid can suppress them on some routes).
+ * - Primary trigger is polling while the search box is focused.
+ *
+ * No secrets here. Talks only to your Cloudflare Worker.
  */
 
-console.log('[LS] script loaded at', location.pathname + location.hash);
 // ✅ Your deployed Worker base URL
-const WORKER_BASE_URL = 'https://ecwid-live-search.shishodia-rakesh.workers.dev';
-
+const WORKER_BASE_URL = "https://ecwid-live-search.shishodia-rakesh.workers.dev";
 
 const CONFIG = {
   minChars: 2,
   debounceMs: 200,
+  pollMs: 150,
   maxProducts: 8,
   maxCategories: 6,
   dropdownOffsetPx: 8,
+  loadingDelayMs: 120,
 };
 
 // Fallback icon for categories when no image is provided
 const CATEGORY_FALLBACK_THUMB =
-  'data:image/svg+xml;utf8,' +
+  "data:image/svg+xml;utf8," +
   encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
       <rect x="10" y="18" width="44" height="34" rx="8" fill="%23E9EEF5"/>
@@ -29,57 +32,22 @@ const CATEGORY_FALLBACK_THUMB =
     </svg>`
   );
 
-let _ecwidLiveSearchBoundInput = null;
-let _ecwidLiveSearchDocHandlerBound = false;
-
-
-let _ecwidLiveSearchActiveIndex = -1;
-let _ecwidLiveSearchLastQuery = '';
-let _ecwidLiveSearchAnchorInput = null;
-
-// STEP (Polling) state: fallback when Ecwid suppresses input/keyup events on some routes
-let _lsPollTimer = null;
-let _lsPollInput = null;
-let _lsPollLastValue = '';
-
-function startSearchPolling(input) {
-  // Restart if switching inputs
-  if (_lsPollInput !== input) {
-    _lsPollInput = input;
-    _lsPollLastValue = input && typeof input.value === 'string' ? input.value : '';
-  }
-
-  if (_lsPollTimer) return;
-
-  _lsPollTimer = setInterval(() => {
-    const el = _lsPollInput;
-    if (!el || el !== document.activeElement) return;
-
-    const v = typeof el.value === 'string' ? el.value : '';
-    if (v === _lsPollLastValue) return;
-    _lsPollLastValue = v;
-
-    // Trigger only when query is meaningful
-    if (v.trim().length < CONFIG.minChars) return;
-
-    // Ensure runner exists and invoke it
-    try { if (typeof el._lsRun !== 'function') initLiveSearchOnce(); } catch {}
-    if (typeof el._lsRun === 'function') {
-      el._lsRun();
-    }
-  }, 150);
-}
-
-function stopSearchPolling() {
-  if (_lsPollTimer) {
-    clearInterval(_lsPollTimer);
-    _lsPollTimer = null;
-  }
-}
+const LS = {
+  activeInput: null,
+  dd: null,
+  abort: null,
+  pollTimer: null,
+  lastValue: "",
+  lastQuery: "",
+  activeIndex: -1,
+  docHandlersBound: false,
+  dropdownClickBound: false,
+  warmCalled: false,
+};
 
 function isDesktopPointer() {
   try {
-    return window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    return window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
   } catch {
     return true;
   }
@@ -97,159 +65,130 @@ function $(sel, root = document) {
   return root.querySelector(sel);
 }
 
+function isVisible(el) {
+  if (!el) return false;
+  if (el.disabled) return false;
+  if (el.offsetParent === null) return false;
+  const cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+  if (cs && (cs.visibility === "hidden" || cs.display === "none")) return false;
+  return true;
+}
+
+/**
+ * IMPORTANT:
+ * We keep input selection simple and deterministic for your theme.
+ * We do NOT use the “first visible input” heuristic anymore (too risky).
+ */
 function findSearchInput() {
-  // Prefer the actual header search field used by your theme
-  const selectors = [
-    'input.ins-header__search-field[name="keyword"]',
-    'form[role="search"] input.ins-header__search-field[name="keyword"]',
-    'input[name="keyword"]',
-    'form[action*="search"] input[name="keyword"]',
-    '.ec-store__search input[name="keyword"]',
-    '.ecwid-search input[name="keyword"]',
-    // Fallbacks
-    'input[type="search"]',
-  ];
+  const el = $('input.ins-header__search-field[name="keyword"]');
+  if (el && isVisible(el)) return el;
 
-  const isVisible = (el) => {
-    if (!el) return false;
-    if (el.disabled) return false;
-    // offsetParent null usually means display:none or not in layout
-    if (el.offsetParent === null) return false;
-    const cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
-    if (cs && (cs.visibility === 'hidden' || cs.display === 'none')) return false;
-    return true;
-  };
+  // Backup selector (still strict)
+  const el2 = $('form[role="search"] input[name="keyword"]');
+  if (el2 && isVisible(el2)) return el2;
 
-  for (const s of selectors) {
-    const el = $(s);
-    if (el && el.tagName === 'INPUT' && isVisible(el)) return el;
-  }
-
-  // Final fallback: heuristics across all inputs, but only visible ones.
-  const inputs = Array.from(document.querySelectorAll('input'));
-  return (
-    inputs.find((i) => {
-      if (!isVisible(i)) return false;
-      const type = (i.getAttribute('type') || '').toLowerCase();
-      const name = (i.getAttribute('name') || '').toLowerCase();
-      const placeholder = (i.getAttribute('placeholder') || '').toLowerCase();
-      const looks = type === 'search' || name.includes('search') || name.includes('keyword') || placeholder.includes('search');
-      return looks;
-    }) || null
-  );
+  return null;
 }
 
 function ensureDropdown(anchorInput) {
-  _ecwidLiveSearchAnchorInput = anchorInput;
+  LS.dd = LS.dd || document.getElementById("ecwid-live-search-dd");
 
-  let dd = document.getElementById('ecwid-live-search-dd');
-
-  const position = () => {
-    const a = _ecwidLiveSearchAnchorInput;
-    if (!a || !dd) return;
-    const r = a.getBoundingClientRect();
-    dd.style.left = `${Math.round(r.left + window.scrollX)}px`;
-    dd.style.top = `${Math.round(r.bottom + window.scrollY + CONFIG.dropdownOffsetPx)}px`;
-    dd.style.width = `${Math.round(r.width)}px`;
-  };
-
-  if (dd) {
-    // Re-anchor + reposition for the current page/layout
-    try { position(); } catch {}
-    // Store position fn so we can reuse it
-    dd._lsPosition = position;
-    return dd;
+  if (!LS.dd) {
+    const dd = document.createElement("div");
+    dd.id = "ecwid-live-search-dd";
+    dd.style.position = "absolute";
+    dd.style.zIndex = "999999";
+    dd.style.background = "#fff";
+    dd.style.border = "1px solid rgba(0,0,0,0.12)";
+    dd.style.borderRadius = "10px";
+    dd.style.boxShadow = "0 10px 25px rgba(0,0,0,0.12)";
+    dd.style.overflow = "hidden";
+    dd.style.display = "none";
+    document.body.appendChild(dd);
+    LS.dd = dd;
   }
 
-  dd = document.createElement('div');
-  dd.id = 'ecwid-live-search-dd';
-  dd.style.position = 'absolute';
-  dd.style.zIndex = '999999';
-  dd.style.background = '#fff';
-  dd.style.border = '1px solid rgba(0,0,0,0.12)';
-  dd.style.borderRadius = '10px';
-  dd.style.boxShadow = '0 10px 25px rgba(0,0,0,0.12)';
-  dd.style.overflow = 'hidden';
-  dd.style.display = 'none';
+  positionDropdown(anchorInput);
 
-  document.body.appendChild(dd);
-
-  // Store position fn and bind global listeners once
-  dd._lsPosition = position;
-  position();
-
+  // Bind resize/scroll once
   if (!window.__lsDropdownPositionBound) {
     window.__lsDropdownPositionBound = true;
-    window.addEventListener('resize', () => {
-      const d = document.getElementById('ecwid-live-search-dd');
-      if (d && d._lsPosition) d._lsPosition();
+    window.addEventListener("resize", () => {
+      if (LS.activeInput) positionDropdown(LS.activeInput);
     });
-    window.addEventListener('scroll', () => {
-      const d = document.getElementById('ecwid-live-search-dd');
-      if (d && d._lsPosition) d._lsPosition();
-    }, true);
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (LS.activeInput) positionDropdown(LS.activeInput);
+      },
+      true
+    );
   }
 
-  // Reposition when input focuses (layout may shift)
-  try { anchorInput.addEventListener('focus', position); } catch {}
-
-  return dd;
+  return LS.dd;
 }
 
-function hideDropdown(dd, { clear = true } = {}) {
-  hideInlineLoading(dd);
-  dd.style.display = 'none';
-  if (clear) dd.innerHTML = '';
-  _ecwidLiveSearchActiveIndex = -1;
-  delete dd.dataset.lsHasResults;
+function positionDropdown(anchorInput) {
+  if (!LS.dd || !anchorInput) return;
+  try {
+    const r = anchorInput.getBoundingClientRect();
+    LS.dd.style.left = `${Math.round(r.left + window.scrollX)}px`;
+    LS.dd.style.top = `${Math.round(r.bottom + window.scrollY + CONFIG.dropdownOffsetPx)}px`;
+    LS.dd.style.width = `${Math.round(r.width)}px`;
+  } catch {}
 }
 
-function getResultRows(dd) {
-  return Array.from(dd.querySelectorAll('a[data-ls-row="1"]'));
+function hideDropdown({ clear = true } = {}) {
+  if (!LS.dd) return;
+  hideInlineLoading();
+  LS.dd.style.display = "none";
+  if (clear) LS.dd.innerHTML = "";
+  LS.activeIndex = -1;
 }
 
-function setActiveRow(dd, index) {
-  const rows = getResultRows(dd);
-  if (!rows.length) {
-    _ecwidLiveSearchActiveIndex = -1;
-    return;
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "style") Object.assign(node.style, v);
+    else if (k === "class") node.className = v;
+    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
+    else if (v === null || v === undefined) continue;
+    else node.setAttribute(k, String(v));
   }
-
-  const clamped = Math.max(0, Math.min(index, rows.length - 1));
-  _ecwidLiveSearchActiveIndex = clamped;
-
-  rows.forEach((r, i) => {
-    if (i === clamped) {
-      r.dataset.lsActive = '1';
-      r.style.background = 'rgba(0,0,0,0.06)';
-    } else {
-      delete r.dataset.lsActive;
-      r.style.background = 'transparent';
-    }
-  });
-
-  // Ensure active row is visible
-  const active = rows[clamped];
-  try { active.scrollIntoView({ block: 'nearest' }); } catch {}
+  for (const c of children) {
+    if (typeof c === "string") node.appendChild(document.createTextNode(c));
+    else if (c) node.appendChild(c);
+  }
+  return node;
 }
 
-function getActiveHref(dd) {
-  const rows = getResultRows(dd);
-  if (_ecwidLiveSearchActiveIndex < 0 || _ecwidLiveSearchActiveIndex >= rows.length) return null;
-  const a = rows[_ecwidLiveSearchActiveIndex];
-  return a ? (a.href || a.getAttribute('href')) : null;
+function sectionTitle(txt) {
+  return el(
+    "div",
+    {
+      style: {
+        padding: "10px 12px 6px",
+        fontSize: "11px",
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        opacity: "0.7",
+        fontWeight: "700",
+      },
+    },
+    [txt]
+  );
 }
 
 function escapeRegExp(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function highlightNode(text, q) {
-  const s = String(text || '');
-  const query = String(q || '').trim();
+  const s = String(text || "");
+  const query = String(q || "").trim();
   if (!query) return document.createTextNode(s);
 
-  const re = new RegExp(escapeRegExp(query), 'ig');
+  const re = new RegExp(escapeRegExp(query), "ig");
   const parts = s.split(re);
   const matches = s.match(re);
   if (!matches) return document.createTextNode(s);
@@ -258,521 +197,407 @@ function highlightNode(text, q) {
   for (let i = 0; i < parts.length; i++) {
     if (parts[i]) frag.appendChild(document.createTextNode(parts[i]));
     if (i < matches.length) {
-      const m = document.createElement('mark');
+      const m = document.createElement("mark");
       m.textContent = matches[i];
-      m.style.background = 'rgba(255, 230, 150, 0.85)';
-      m.style.padding = '0 2px';
-      m.style.borderRadius = '4px';
+      m.style.background = "rgba(255, 230, 150, 0.85)";
+      m.style.padding = "0 2px";
+      m.style.borderRadius = "4px";
       frag.appendChild(m);
     }
   }
   return frag;
 }
 
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'style') Object.assign(node.style, v);
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-    else if (v === null || v === undefined) continue;
-    else node.setAttribute(k, String(v));
-  }
-  for (const c of children) {
-    if (typeof c === 'string') node.appendChild(document.createTextNode(c));
-    else if (c) node.appendChild(c);
-  }
-  return node;
-}
-
-function sectionTitle(txt) {
-  return el(
-    'div',
-    {
-      style: {
-        padding: '10px 12px 6px',
-        fontSize: '11px',
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        opacity: '0.7',
-        fontWeight: '700',
-      },
-    },
-    [txt]
-  );
-}
-
-function renderLoading(dd) {
-  dd.innerHTML = '';
-  dd.appendChild(sectionTitle('Search'));
-  dd.appendChild(
-    el('div', { style: { padding: '12px', fontSize: '13px', opacity: '0.8' } }, ['Searching…'])
-  );
-  delete dd.dataset.lsHasResults;
-  dd.style.display = 'block';
-}
-
-function showInlineLoading(dd) {
-  // Non-destructive loader: keep current results and show a subtle footer.
-  let footer = dd.querySelector('[data-ls-loading="1"]');
-  if (!footer) {
-    footer = el(
-      'div',
-      {
-        style: {
-          padding: '8px 12px',
-          fontSize: '12px',
-          opacity: '0.75',
-          borderTop: '1px solid rgba(0,0,0,0.08)',
-        },
-      },
-      ['Searching…']
-    );
-    footer.setAttribute('data-ls-loading', '1');
-    dd.appendChild(footer);
-  }
-}
-
-function hideInlineLoading(dd) {
-  const footer = dd.querySelector('[data-ls-loading="1"]');
-  if (footer) footer.remove();
-}
-
-function itemRow({ title, subtitle, thumb, href, dataAttrs = {} }) {
-  const row = el('a', {
+function itemRow({ titleNode, subtitle, thumb, href }) {
+  const row = el("a", {
     href,
     style: {
-      display: 'flex',
-      gap: '10px',
-      alignItems: 'center',
-      padding: '10px 12px',
-      textDecoration: 'none',
-      color: '#111',
+      display: "flex",
+      gap: "10px",
+      alignItems: "center",
+      padding: "10px 12px",
+      textDecoration: "none",
+      color: "#111",
     },
-    onmouseenter: (e) => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)'),
-    onmouseleave: (e) => (e.currentTarget.style.background = 'transparent'),
   });
 
-  // Attach metadata for Ecwid navigation
-  for (const [k, v] of Object.entries(dataAttrs)) {
-    if (v === null || v === undefined) continue;
-    row.dataset[k] = String(v);
-  }
+  row.dataset.lsRow = "1";
 
-  // Mark as a navigable result row
-  row.dataset.lsRow = '1';
-
-  // Desktop UX: hovering a row updates the active index
-  row.addEventListener('mouseenter', () => {
-    if (!isDesktopPointer()) return;
-    const dd = document.getElementById('ecwid-live-search-dd');
-    if (!dd) return;
-    const rows = getResultRows(dd);
-    const idx = rows.indexOf(row);
-    if (idx >= 0) setActiveRow(dd, idx);
-  });
-
-  const img = el('div', {
+  const img = el("div", {
     style: {
-      width: '42px',
-      height: '42px',
-      borderRadius: '8px',
-      background: 'rgba(0,0,0,0.06)',
-      flex: '0 0 42px',
-      overflow: 'hidden',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
+      width: "42px",
+      height: "42px",
+      borderRadius: "8px",
+      background: "rgba(0,0,0,0.06)",
+      flex: "0 0 42px",
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
     },
   });
 
   if (thumb) {
     const im = new Image();
     im.src = thumb;
-    im.alt = title;
-    im.style.width = '100%';
-    im.style.height = '100%';
-    im.style.objectFit = 'cover';
+    im.alt = "Thumb";
+    im.style.width = "100%";
+    im.style.height = "100%";
+    im.style.objectFit = "cover";
     img.appendChild(im);
   }
 
-  const text = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } });
-  const titleDiv = el('div', { style: { fontSize: '13px', fontWeight: '600' } });
-  if (title && typeof title === 'object' && title.nodeType) titleDiv.appendChild(title);
-  else if (title && typeof title === 'object' && title instanceof DocumentFragment) titleDiv.appendChild(title);
-  else titleDiv.appendChild(document.createTextNode(String(title || '')));
+  const text = el("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } });
+  const titleDiv = el("div", { style: { fontSize: "13px", fontWeight: "600" } });
+  titleDiv.appendChild(titleNode || document.createTextNode(""));
   text.appendChild(titleDiv);
-  if (subtitle) text.appendChild(el('div', { style: { fontSize: '12px', opacity: '0.75' } }, [subtitle]));
 
+  if (subtitle) {
+    text.appendChild(el("div", { style: { fontSize: "12px", opacity: "0.75" } }, [subtitle]));
+  }
 
   row.appendChild(img);
   row.appendChild(text);
+
+  // Desktop hover updates active selection
+  row.addEventListener("mouseenter", () => {
+    if (!isDesktopPointer()) return;
+    const rows = getResultRows();
+    const idx = rows.indexOf(row);
+    if (idx >= 0) setActiveRow(idx);
+  });
+
   return row;
 }
 
-function absUrlMaybe(u) {
-  if (!u) return null;
-  if (/^https?:\/\//i.test(u)) return u;
-  if (u.startsWith('/')) return `${window.location.origin}${u}`;
-  return u;
+function getResultRows() {
+  if (!LS.dd) return [];
+  return Array.from(LS.dd.querySelectorAll('a[data-ls-row="1"]'));
 }
 
-function buildProductHref(p) {
-  const u = absUrlMaybe(p.url);
-  if (u) return u;
-  if (p.id) return `${window.location.origin}/#!/p/${p.id}`;
-  return '#';
+function setActiveRow(index) {
+  const rows = getResultRows();
+  if (!rows.length) {
+    LS.activeIndex = -1;
+    return;
+  }
+  const clamped = Math.max(0, Math.min(index, rows.length - 1));
+  LS.activeIndex = clamped;
+
+  rows.forEach((r, i) => {
+    r.style.background = i === clamped ? "rgba(0,0,0,0.06)" : "transparent";
+  });
+
+  try {
+    rows[clamped].scrollIntoView({ block: "nearest" });
+  } catch {}
 }
 
-function buildCategoryHref(c) {
-  const u = absUrlMaybe(c.url);
-  if (u) return u;
-  if (c.id) return `${window.location.origin}/#!/c/${c.id}`;
-  return '#';
+function getActiveHref() {
+  const rows = getResultRows();
+  if (LS.activeIndex < 0 || LS.activeIndex >= rows.length) return null;
+  const a = rows[LS.activeIndex];
+  return a ? a.href || a.getAttribute("href") : null;
 }
 
+/**
+ * Non-destructive loading footer (Solution A)
+ */
+function showInlineLoading() {
+  if (!LS.dd) return;
+  let footer = LS.dd.querySelector('[data-ls-loading="1"]');
+  if (footer) return;
+
+  footer = el(
+    "div",
+    {
+      style: {
+        padding: "8px 12px",
+        fontSize: "12px",
+        opacity: "0.75",
+        borderTop: "1px solid rgba(0,0,0,0.08)",
+      },
+    },
+    ["Searching…"]
+  );
+  footer.setAttribute("data-ls-loading", "1");
+  LS.dd.appendChild(footer);
+}
+
+function hideInlineLoading() {
+  if (!LS.dd) return;
+  const footer = LS.dd.querySelector('[data-ls-loading="1"]');
+  if (footer) footer.remove();
+}
+
+/**
+ * Call Worker
+ */
 async function fetchResults(q, signal) {
-  const base = WORKER_BASE_URL.replace(/\/$/, '');
+  const base = WORKER_BASE_URL.replace(/\/$/, "");
   const url = `${base}/search?q=${encodeURIComponent(q)}`;
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`Search failed (${res.status})`);
   return res.json();
 }
 
-function render(dd, data) {
-  const products = (data.products || []).slice(0, CONFIG.maxProducts);
-  const categories = (data.categories || []).slice(0, CONFIG.maxCategories);
+function renderResults(payload) {
+  const dd = LS.dd;
+  if (!dd) return;
 
-  _ecwidLiveSearchLastQuery = (data && data.q) ? String(data.q) : '';
-  _ecwidLiveSearchActiveIndex = -1;
+  const q = payload && payload.q ? String(payload.q) : "";
+  LS.lastQuery = q;
+  LS.activeIndex = -1;
 
-  // STEP 3.1: Ensure inline loading is hidden before clearing
-  hideInlineLoading(dd);
-  dd.innerHTML = '';
+  const products = (payload.products || []).slice(0, CONFIG.maxProducts);
+  const categories = (payload.categories || []).slice(0, CONFIG.maxCategories);
+
+  dd.innerHTML = "";
+  hideInlineLoading();
 
   if (!products.length && !categories.length) {
-    dd.appendChild(el('div', { style: { padding: '12px', fontSize: '13px', opacity: '0.8' } }, ['No results']));
-    // STEP 3.2: Ensure inline loading is hidden before showing
-    hideInlineLoading(dd);
-    dd.style.display = 'block';
+    dd.appendChild(el("div", { style: { padding: "12px", fontSize: "13px", opacity: "0.8" } }, ["No results"]));
+    dd.style.display = "block";
     return;
   }
 
   if (products.length) {
-    dd.appendChild(sectionTitle('Products'));
+    dd.appendChild(sectionTitle("Products"));
     for (const p of products) {
       dd.appendChild(
         itemRow({
-          title: highlightNode(p.name || 'Product', _ecwidLiveSearchLastQuery),
-          subtitle: p.price ? String(p.price) : p.sku ? `SKU: ${p.sku}` : '',
-          thumb: p.thumb,
-          href: buildProductHref(p),
-          dataAttrs: { ecwidType: 'product', ecwidId: p.id },
+          titleNode: highlightNode(p.name || "Product", q),
+          subtitle: p.price ? String(p.price) : p.sku ? `SKU: ${p.sku}` : "",
+          thumb: p.thumb || null,
+          href: p.url || "#",
         })
       );
     }
   }
 
   if (categories.length) {
-    dd.appendChild(sectionTitle('Categories'));
+    dd.appendChild(sectionTitle("Categories"));
     for (const c of categories) {
       dd.appendChild(
         itemRow({
-          title: highlightNode(c.name || 'Category', _ecwidLiveSearchLastQuery),
-          subtitle: 'Category',
+          titleNode: highlightNode(c.name || "Category", q),
+          subtitle: "Category",
           thumb: c.thumb || CATEGORY_FALLBACK_THUMB,
-          href: buildCategoryHref(c),
-          dataAttrs: { ecwidType: 'category', ecwidId: c.id },
+          href: c.url || "#",
         })
       );
     }
   }
 
-  dd.dataset.lsHasResults = '1';
-  // STEP 3.2: Ensure inline loading is hidden before showing
-  hideInlineLoading(dd);
-  dd.style.display = 'block';
+  dd.style.display = "block";
 }
 
-function initLiveSearchOnce() {
-  console.log('[LS] initLiveSearchOnce()', { path: location.pathname + location.hash, time: Date.now() });
-  const input = findSearchInput();
-  console.log('[LS] search input', input ? 'FOUND' : 'NOT FOUND', input);
-  if (!input) return false;
+const runSearch = debounce(async () => {
+  const input = LS.activeInput;
+  if (!input) return;
 
-  const existingDd = document.getElementById('ecwid-live-search-dd');
+  ensureDropdown(input);
+  positionDropdown(input);
 
-  console.log('[LS] guard check', {
-    sameInput: _ecwidLiveSearchBoundInput === input,
-    hasDropdown: !!existingDd,
-    boundInput: _ecwidLiveSearchBoundInput,
-    currentInput: input,
-  });
-
-  const dropdownIsAlive = existingDd && document.body.contains(existingDd);
-
-  if (_ecwidLiveSearchBoundInput === input && dropdownIsAlive) {
-    // Even when skipping init, ensure dropdown is anchored to the current input (SPA nav)
-    try { ensureDropdown(input); } catch {}
-    console.log('[LS] EARLY RETURN — skipping init (dropdown alive)');
-    return true;
+  const q = (input.value || "").trim();
+  if (q.length < CONFIG.minChars) {
+    hideDropdown({ clear: true });
+    return;
   }
 
-  _ecwidLiveSearchBoundInput = input;
+  // Abort previous request
+  if (LS.abort) LS.abort.abort();
+  LS.abort = new AbortController();
 
-  const dd = ensureDropdown(input);
-  let abort = null;
-
-  const run = debounce(async () => {
-    const q = (input.value || '').trim();
-    if (q.length < CONFIG.minChars) {
-      hideDropdown(dd);
-      return;
+  const loadingTimer = setTimeout(() => {
+    if (LS.dd && LS.dd.style.display !== "none" && LS.dd.innerHTML.trim().length > 0) {
+      showInlineLoading();
+    } else {
+      // first open: show a tiny skeleton
+      LS.dd.innerHTML = "";
+      LS.dd.appendChild(sectionTitle("Search"));
+      LS.dd.appendChild(el("div", { style: { padding: "12px", fontSize: "13px", opacity: "0.8" } }, ["Searching…"]));
+      LS.dd.style.display = "block";
     }
+  }, CONFIG.loadingDelayMs);
 
-    if (abort) abort.abort();
-    abort = new AbortController();
+  try {
+    const data = await fetchResults(q, LS.abort.signal);
+    clearTimeout(loadingTimer);
+    hideInlineLoading();
+    renderResults(data);
+  } catch {
+    clearTimeout(loadingTimer);
+    hideInlineLoading();
+    // If request fails, do not be noisy; just hide
+    hideDropdown({ clear: false });
+  }
+}, CONFIG.debounceMs);
 
-    const loadingTimer = setTimeout(() => {
-      if (dd.dataset.lsHasResults) {
-        // Solution A: keep results visible; show subtle footer loader.
-        showInlineLoading(dd);
-      } else {
-        // First load (no results yet): show the small skeleton.
-        renderLoading(dd);
-      }
-    }, 120);
+/**
+ * Polling: the unstoppable trigger.
+ * Runs only while the search input is focused.
+ */
+function startPolling(input) {
+  LS.activeInput = input;
+  LS.lastValue = input.value || "";
+  ensureDropdown(input);
 
-    try {
-      const data = await fetchResults(q, abort.signal);
-      clearTimeout(loadingTimer);
-      hideInlineLoading(dd);
-      render(dd, data);
-    } catch {
-      clearTimeout(loadingTimer);
-      hideInlineLoading(dd);
-      hideDropdown(dd);
-    }
-  }, CONFIG.debounceMs);
+  if (LS.pollTimer) return;
+  LS.pollTimer = setInterval(() => {
+    const el = LS.activeInput;
+    if (!el) return;
+    if (document.activeElement !== el) return;
 
-  // STEP 1: store runner on the input so delegated listeners can call it even if Ecwid replaces listeners
-  input._lsRun = run;
+    const v = el.value || "";
+    if (v === LS.lastValue) return;
+    LS.lastValue = v;
 
-  input.addEventListener('input', run);
+    runSearch();
+  }, CONFIG.pollMs);
+}
 
-  // STEP 1 FIX: key-based triggers (Ecwid-safe)
-  input.addEventListener('keyup', (e) => {
-    // Ignore navigation keys
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape') return;
-    if (typeof input._lsRun === 'function') {
-      input._lsRun();
-    }
-  });
+function stopPolling() {
+  if (LS.pollTimer) {
+    clearInterval(LS.pollTimer);
+    LS.pollTimer = null;
+  }
+}
 
-  input.addEventListener('compositionend', () => {
-    if (typeof input._lsRun === 'function') {
-      input._lsRun();
-    }
-  });
+/**
+ * Global handlers (installed once)
+ */
+function bindGlobalHandlers() {
+  if (LS.docHandlersBound) return;
+  LS.docHandlersBound = true;
 
-  if (!_ecwidLiveSearchDocHandlerBound) {
-    _ecwidLiveSearchDocHandlerBound = true;
+  // Close dropdown when clicking outside
+  document.addEventListener(
+    "click",
+    (e) => {
+      const input = LS.activeInput;
+      const dd = LS.dd;
+      if (!input || !dd) return;
 
-    // STEP 2: Delegated input handler (SPA-safe). Ensures typing always triggers live search.
-    if (!window.__lsDelegatedInputBound) {
-      window.__lsDelegatedInputBound = true;
-      document.addEventListener(
-        'input',
-        (e) => {
-          const t = e.target;
-          if (!t || t.tagName !== 'INPUT') return;
-          if (!t.classList || !t.classList.contains('ins-header__search-field')) return;
-          if (t.name !== 'keyword') return;
+      if (e.target === input) return;
+      if (dd.contains(e.target)) return;
 
-          console.log('[LS] delegated input fired', { path: location.pathname + location.hash, value: t.value });
+      hideDropdown({ clear: false });
+    },
+    true
+  );
 
-          // Treat this as the active input
-          _ecwidLiveSearchBoundInput = t;
+  // Navigate when clicking a dropdown item
+  document.addEventListener(
+    "click",
+    (e) => {
+      const dd = LS.dd;
+      if (!dd) return;
+      const a = e.target && e.target.closest ? e.target.closest("#ecwid-live-search-dd a") : null;
+      if (!a) return;
 
-          // Ensure dropdown exists/anchored
-          try { ensureDropdown(t); } catch {}
+      const href = a.href || a.getAttribute("href");
+      if (!href) return;
 
-          // If runner missing (input replaced), rebuild once
-          if (typeof t._lsRun !== 'function') {
-            try { initLiveSearchOnce(); } catch {}
-          }
+      e.preventDefault();
+      e.stopPropagation();
+      window.location.assign(href);
+    },
+    true
+  );
 
-          if (typeof t._lsRun === 'function') {
-            t._lsRun();
-          }
-        },
-        true
-      );
-    }
+  // Focus-based polling trigger (works even if input events are suppressed)
+  document.addEventListener(
+    "focusin",
+    (e) => {
+      const t = e.target;
+      if (!t || t.tagName !== "INPUT") return;
+      if (!t.classList || !t.classList.contains("ins-header__search-field")) return;
+      if (t.name !== "keyword") return;
 
-    document.addEventListener('click', (e) => {
-      const activeInput = _ecwidLiveSearchBoundInput;
-      const dropdown = document.getElementById('ecwid-live-search-dd');
-      if (!activeInput || !dropdown) return;
+      startPolling(t);
+    },
+    true
+  );
 
-      if (e.target === activeInput) return;
+  document.addEventListener(
+    "focusout",
+    (e) => {
+      const t = e.target;
+      if (!t || t.tagName !== "INPUT") return;
+      if (!t.classList || !t.classList.contains("ins-header__search-field")) return;
+      if (t.name !== "keyword") return;
 
-      // If click/tap is inside dropdown, do NOT hide/clear here.
-      // On mobile, destroying the tapped <a> can cancel navigation.
-      if (dropdown.contains(e.target)) {
+      stopPolling();
+    },
+    true
+  );
+
+  // Desktop keyboard nav
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (!isDesktopPointer()) return;
+      if (!LS.activeInput || document.activeElement !== LS.activeInput) return;
+      if (!LS.dd || LS.dd.style.display === "none") return;
+
+      if (e.key === "Escape") {
+        hideDropdown({ clear: false });
         return;
       }
 
-      hideDropdown(dropdown);
-    });
-  }
-
-  // Extra mobile safety: avoid tearing down dropdown during <a> tap/click sequence
-  if (!dd.dataset.ecwidLiveSearchClickBound) {
-    dd.dataset.ecwidLiveSearchClickBound = '1';
-
-    dd.addEventListener(
-      'click',
-      (e) => {
-        const a = e.target && e.target.closest ? e.target.closest('a') : null;
-        if (!a) return;
-
-        // Deterministic navigation: use the actual href. This avoids Ecwid Storefront API CORS issues.
-        const href = a.href || a.getAttribute('href');
-        if (!href) return;
-
-        // Prevent any other handlers from interfering, then navigate.
+      if (e.key === "ArrowDown") {
         e.preventDefault();
-        e.stopPropagation();
-
-        // Use assign() so it behaves like a normal link navigation.
-        window.location.assign(href);
-      },
-      true
-    );
-  }
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      hideDropdown(dd);
-      return;
-    }
-
-    // Desktop-only keyboard navigation
-    if (!isDesktopPointer()) return;
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const rows = getResultRows(dd);
-      if (!rows.length) return;
-      const next = (_ecwidLiveSearchActiveIndex < 0) ? 0 : _ecwidLiveSearchActiveIndex + 1;
-      setActiveRow(dd, next);
-      return;
-    }
-
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const rows = getResultRows(dd);
-      if (!rows.length) return;
-      const prev = (_ecwidLiveSearchActiveIndex <= 0) ? 0 : _ecwidLiveSearchActiveIndex - 1;
-      setActiveRow(dd, prev);
-      return;
-    }
-
-    if (e.key === 'Enter') {
-      const href = getActiveHref(dd);
-      if (!href) return;
-      e.preventDefault();
-      window.location.assign(href);
-    }
-  });
-
-  return true;
-}
-
-// STEP 4 DIAGNOSTIC: Detect if our dropdown is removed during SPA navigation/rerenders
-if (!window.__lsObserverInstalled) {
-  window.__lsObserverInstalled = true;
-
-  try {
-    const mo = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        for (const n of m.removedNodes) {
-          if (n && n.id === 'ecwid-live-search-dd') {
-            console.warn('[LS] DROPDOWN REMOVED from DOM', {
-              path: location.pathname + location.hash,
-              time: Date.now(),
-            });
-          }
-        }
+        setActiveRow(LS.activeIndex < 0 ? 0 : LS.activeIndex + 1);
+        return;
       }
-    });
 
-    mo.observe(document.body, { childList: true, subtree: true });
-  } catch (e) {
-    console.warn('[LS] MutationObserver setup failed', e);
-  }
-}
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveRow(LS.activeIndex <= 0 ? 0 : LS.activeIndex - 1);
+        return;
+      }
 
-// STEP 1 FIX: Install delegated input handler at top-level (SPA-safe).
-if (!window.__lsDelegatedInputTopBound) {
-  window.__lsDelegatedInputTopBound = true;
-
-  document.addEventListener(
-    'input',
-    (e) => {
-      const t = e.target;
-      if (!t || t.tagName !== 'INPUT') return;
-      if (!t.classList || !t.classList.contains('ins-header__search-field')) return;
-      if (t.name !== 'keyword') return;
-
-      console.log('[LS] TOP delegated input fired', {
-        path: location.pathname + location.hash,
-        value: t.value,
-      });
-
-      // Ensure init has run for this input and dropdown exists
-      try { initLiveSearchOnce(); } catch {}
-
-      // Trigger the runner if present
-      if (typeof t._lsRun === 'function') {
-        t._lsRun();
+      if (e.key === "Enter") {
+        const href = getActiveHref();
+        if (!href) return;
+        e.preventDefault();
+        window.location.assign(href);
       }
     },
     true
   );
 }
 
-(function bindEcwidLifecycle() {
-  // Re-init when Ecwid changes pages (Instant Site SPA)
-  if (window.Ecwid && window.Ecwid.OnPageLoaded && typeof window.Ecwid.OnPageLoaded.add === 'function') {
-    if (!window.__ecwidLiveSearchOnPageLoadedBound) {
-      window.__ecwidLiveSearchOnPageLoadedBound = true;
-      window.Ecwid.OnPageLoaded.add(function () {
-        // slight delay to allow DOM to settle
-        setTimeout(() => {
-          try { initLiveSearchOnce(); } catch {}
-        }, 50);
-      });
-    }
-  }
-})();
-
-(function boot() {
-  const startedAt = Date.now();
-
-  // Refinement 2: warm up the Worker (and its category cache) in the background
+/**
+ * Warmup worker (optional perf)
+ */
+function warmWorkerOnce() {
+  if (LS.warmCalled) return;
+  LS.warmCalled = true;
   try {
-    fetch(`${WORKER_BASE_URL.replace(/\/$/, '')}/warm`, { method: 'GET', mode: 'cors' }).catch(() => {});
+    fetch(`${WORKER_BASE_URL.replace(/\/$/, "")}/warm`, { method: "GET", mode: "cors" }).catch(() => {});
   } catch {}
+}
 
-  const timer = setInterval(() => {
-    const ok = initLiveSearchOnce();
-    if (ok) {
-      // Do NOT stop polling. Ecwid may replace the search input after interactions (especially on mobile).
-      // Keeping this running allows automatic re-bind.
-      return;
+/**
+ * Boot: bind handlers, warm worker, and keep input reference fresh.
+ * We poll lightly just to keep LS.activeInput fresh if Ecwid swaps header nodes.
+ */
+(function boot() {
+  bindGlobalHandlers();
+  warmWorkerOnce();
+
+  // Keep LS.activeInput updated if header input is swapped by SPA
+  setInterval(() => {
+    const input = findSearchInput();
+    if (input) {
+      // If user is currently focused in the search box, keep the anchor updated
+      if (document.activeElement === input) {
+        LS.activeInput = input;
+        ensureDropdown(input);
+        positionDropdown(input);
+      }
     }
-    // Keep polling indefinitely (low overhead). Ecwid can replace the search input long after page load.
-    // If you want to reduce overhead later, we can switch to MutationObserver.
   }, 800);
 })();
