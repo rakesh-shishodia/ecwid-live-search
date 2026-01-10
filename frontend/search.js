@@ -513,10 +513,45 @@ function initLiveSearchOnce() {
     }
   }, CONFIG.debounceMs);
 
+  // STEP 1: store runner on the input so delegated listeners can call it even if Ecwid replaces listeners
+  input._lsRun = run;
+
   input.addEventListener('input', run);
 
   if (!_ecwidLiveSearchDocHandlerBound) {
     _ecwidLiveSearchDocHandlerBound = true;
+
+    // STEP 2: Delegated input handler (SPA-safe). Ensures typing always triggers live search.
+    if (!window.__lsDelegatedInputBound) {
+      window.__lsDelegatedInputBound = true;
+      document.addEventListener(
+        'input',
+        (e) => {
+          const t = e.target;
+          if (!t || t.tagName !== 'INPUT') return;
+          if (!t.classList || !t.classList.contains('ins-header__search-field')) return;
+          if (t.name !== 'keyword') return;
+
+          console.log('[LS] delegated input fired', { path: location.pathname + location.hash, value: t.value });
+
+          // Treat this as the active input
+          _ecwidLiveSearchBoundInput = t;
+
+          // Ensure dropdown exists/anchored
+          try { ensureDropdown(t); } catch {}
+
+          // If runner missing (input replaced), rebuild once
+          if (typeof t._lsRun !== 'function') {
+            try { initLiveSearchOnce(); } catch {}
+          }
+
+          if (typeof t._lsRun === 'function') {
+            t._lsRun();
+          }
+        },
+        true
+      );
+    }
 
     document.addEventListener('click', (e) => {
       const activeInput = _ecwidLiveSearchBoundInput;
