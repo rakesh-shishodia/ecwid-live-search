@@ -657,6 +657,35 @@ if (!window.__lsObserverInstalled) {
   }
 }
 
+// STEP 1 FIX: Install delegated input handler at top-level (SPA-safe).
+if (!window.__lsDelegatedInputTopBound) {
+  window.__lsDelegatedInputTopBound = true;
+
+  document.addEventListener(
+    'input',
+    (e) => {
+      const t = e.target;
+      if (!t || t.tagName !== 'INPUT') return;
+      if (!t.classList || !t.classList.contains('ins-header__search-field')) return;
+      if (t.name !== 'keyword') return;
+
+      console.log('[LS] TOP delegated input fired', {
+        path: location.pathname + location.hash,
+        value: t.value,
+      });
+
+      // Ensure init has run for this input and dropdown exists
+      try { initLiveSearchOnce(); } catch {}
+
+      // Trigger the runner if present
+      if (typeof t._lsRun === 'function') {
+        t._lsRun();
+      }
+    },
+    true
+  );
+}
+
 (function bindEcwidLifecycle() {
   // Re-init when Ecwid changes pages (Instant Site SPA)
   if (window.Ecwid && window.Ecwid.OnPageLoaded && typeof window.Ecwid.OnPageLoaded.add === 'function') {
