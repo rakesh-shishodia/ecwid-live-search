@@ -489,6 +489,20 @@ function bindGlobalHandlers() {
       const href = a.href || a.getAttribute("href");
       if (!href) return;
 
+      const isCoarse = (() => {
+        try {
+          return window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        } catch {
+          return false;
+        }
+      })();
+
+      if (isCoarse) {
+        // Mobile/touch: allow native <a> navigation. Do not interfere.
+        return;
+      }
+
+      // Desktop: programmatic navigation is fine.
       e.preventDefault();
       e.stopPropagation();
       window.location.assign(href);
