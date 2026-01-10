@@ -5,6 +5,7 @@
  * IMPORTANT: This script must NOT contain any Ecwid secret token. It talks only to your Worker.
  */
 
+console.log('[LS] script loaded at', location.pathname + location.hash);
 // ✅ Your deployed Worker base URL
 const WORKER_BASE_URL = 'https://ecwid-live-search.shishodia-rakesh.workers.dev';
 
@@ -425,11 +426,26 @@ function render(dd, data) {
 }
 
 function initLiveSearchOnce() {
+  console.log('[LS] initLiveSearchOnce()', { path: location.pathname + location.hash, time: Date.now() });
   const input = findSearchInput();
+  console.log('[LS] search input', input ? 'FOUND' : 'NOT FOUND', input);
   if (!input) return false;
 
-  // Ecwid can replace the search input node (especially on mobile). Re-bind if it changes.
-  if (_ecwidLiveSearchBoundInput === input) return true;
+  const existingDd = document.getElementById('ecwid-live-search-dd');
+
+  console.log('[LS] guard check', {
+    sameInput: _ecwidLiveSearchBoundInput === input,
+    hasDropdown: !!existingDd,
+    boundInput: _ecwidLiveSearchBoundInput,
+    currentInput: input,
+  });
+
+  // TEMP DIAGNOSTIC: keep the original behavior, but log when we skip init
+  if (_ecwidLiveSearchBoundInput === input) {
+    console.log('[LS] EARLY RETURN — skipping init');
+    return true;
+  }
+
   _ecwidLiveSearchBoundInput = input;
 
   const dd = ensureDropdown(input);
@@ -550,6 +566,30 @@ function initLiveSearchOnce() {
   });
 
   return true;
+}
+
+// STEP 4 DIAGNOSTIC: Detect if our dropdown is removed during SPA navigation/rerenders
+if (!window.__lsObserverInstalled) {
+  window.__lsObserverInstalled = true;
+
+  try {
+    const mo = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const n of m.removedNodes) {
+          if (n && n.id === 'ecwid-live-search-dd') {
+            console.warn('[LS] DROPDOWN REMOVED from DOM', {
+              path: location.pathname + location.hash,
+              time: Date.now(),
+            });
+          }
+        }
+      }
+    });
+
+    mo.observe(document.body, { childList: true, subtree: true });
+  } catch (e) {
+    console.warn('[LS] MutationObserver setup failed', e);
+  }
 }
 
 (function bindEcwidLifecycle() {
