@@ -34,6 +34,7 @@ let _ecwidLiveSearchDocHandlerBound = false;
 
 let _ecwidLiveSearchActiveIndex = -1;
 let _ecwidLiveSearchLastQuery = '';
+let _ecwidLiveSearchAnchorInput = null;
 
 function isDesktopPointer() {
   try {
@@ -98,8 +99,26 @@ function findSearchInput() {
 }
 
 function ensureDropdown(anchorInput) {
+  _ecwidLiveSearchAnchorInput = anchorInput;
+
   let dd = document.getElementById('ecwid-live-search-dd');
-  if (dd) return dd;
+
+  const position = () => {
+    const a = _ecwidLiveSearchAnchorInput;
+    if (!a || !dd) return;
+    const r = a.getBoundingClientRect();
+    dd.style.left = `${Math.round(r.left + window.scrollX)}px`;
+    dd.style.top = `${Math.round(r.bottom + window.scrollY + CONFIG.dropdownOffsetPx)}px`;
+    dd.style.width = `${Math.round(r.width)}px`;
+  };
+
+  if (dd) {
+    // Re-anchor + reposition for the current page/layout
+    try { position(); } catch {}
+    // Store position fn so we can reuse it
+    dd._lsPosition = position;
+    return dd;
+  }
 
   dd = document.createElement('div');
   dd.id = 'ecwid-live-search-dd';
@@ -114,16 +133,24 @@ function ensureDropdown(anchorInput) {
 
   document.body.appendChild(dd);
 
-  function position() {
-    const r = anchorInput.getBoundingClientRect();
-    dd.style.left = `${Math.round(r.left + window.scrollX)}px`;
-    dd.style.top = `${Math.round(r.bottom + window.scrollY + CONFIG.dropdownOffsetPx)}px`;
-    dd.style.width = `${Math.round(r.width)}px`;
+  // Store position fn and bind global listeners once
+  dd._lsPosition = position;
+  position();
+
+  if (!window.__lsDropdownPositionBound) {
+    window.__lsDropdownPositionBound = true;
+    window.addEventListener('resize', () => {
+      const d = document.getElementById('ecwid-live-search-dd');
+      if (d && d._lsPosition) d._lsPosition();
+    });
+    window.addEventListener('scroll', () => {
+      const d = document.getElementById('ecwid-live-search-dd');
+      if (d && d._lsPosition) d._lsPosition();
+    }, true);
   }
 
-  position();
-  window.addEventListener('resize', position);
-  window.addEventListener('scroll', position, true);
+  // Reposition when input focuses (layout may shift)
+  try { anchorInput.addEventListener('focus', position); } catch {}
 
   return dd;
 }
@@ -443,6 +470,8 @@ function initLiveSearchOnce() {
   const dropdownIsAlive = existingDd && document.body.contains(existingDd);
 
   if (_ecwidLiveSearchBoundInput === input && dropdownIsAlive) {
+    // Even when skipping init, ensure dropdown is anchored to the current input (SPA nav)
+    try { ensureDropdown(input); } catch {}
     console.log('[LS] EARLY RETURN — skipping init (dropdown alive)');
     return true;
   }
