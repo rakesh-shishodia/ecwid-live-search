@@ -38,10 +38,8 @@ const LS = {
   abort: null,
   pollTimer: null,
   lastValue: "",
-  lastQuery: "",
   activeIndex: -1,
   docHandlersBound: false,
-  dropdownClickBound: false,
   warmCalled: false,
 };
 
@@ -61,9 +59,6 @@ function debounce(fn, wait) {
   };
 }
 
-function $(sel, root = document) {
-  return root.querySelector(sel);
-}
 
 function isVisible(el) {
   if (!el) return false;
@@ -80,11 +75,11 @@ function isVisible(el) {
  * We do NOT use the “first visible input” heuristic anymore (too risky).
  */
 function findSearchInput() {
-  const el = $('input.ins-header__search-field[name="keyword"]');
+  const el = document.querySelector('input.ins-header__search-field[name="keyword"]');
   if (el && isVisible(el)) return el;
 
   // Backup selector (still strict)
-  const el2 = $('form[role="search"] input[name="keyword"]');
+  const el2 = document.querySelector('form[role="search"] input[name="keyword"]');
   if (el2 && isVisible(el2)) return el2;
 
   return null;
@@ -346,7 +341,6 @@ function renderResults(payload) {
   if (!dd) return;
 
   const q = payload && payload.q ? String(payload.q) : "";
-  LS.lastQuery = q;
   LS.activeIndex = -1;
 
   const products = (payload.products || []).slice(0, CONFIG.maxProducts);
@@ -397,7 +391,6 @@ const runSearch = debounce(async () => {
   if (!input) return;
 
   ensureDropdown(input);
-  positionDropdown(input);
 
   const q = (input.value || "").trim();
   if (q.length < CONFIG.minChars) {
@@ -596,7 +589,6 @@ function warmWorkerOnce() {
       if (document.activeElement === input) {
         LS.activeInput = input;
         ensureDropdown(input);
-        positionDropdown(input);
       }
     }
   }, 800);
