@@ -200,7 +200,7 @@ function highlightNode(text, q) {
   return frag;
 }
 
-function itemRow({ titleNode, subtitle, thumb, href }) {
+function itemRow({ titleNode, subtitle, metaNode = null, thumb, href }) {
   const row = el("a", {
     href,
     style: {
@@ -244,7 +244,11 @@ function itemRow({ titleNode, subtitle, thumb, href }) {
   titleDiv.appendChild(titleNode || document.createTextNode(""));
   text.appendChild(titleDiv);
 
-  if (subtitle) {
+  if (metaNode) {
+    const metaDiv = el('div', { style: { fontSize: '12px', opacity: '0.85', display: 'flex', flexWrap: 'wrap', gap: '8px' } });
+    metaDiv.appendChild(metaNode);
+    text.appendChild(metaDiv);
+  } else if (subtitle) {
     text.appendChild(el("div", { style: { fontSize: "12px", opacity: "0.75" } }, [subtitle]));
   }
 
@@ -260,6 +264,37 @@ function itemRow({ titleNode, subtitle, thumb, href }) {
   });
 
   return row;
+}
+
+// Build product meta line: price + SKU + stock status
+function buildProductMetaNode(p) {
+  const frag = document.createDocumentFragment();
+
+  const priceText = p && p.price ? String(p.price) : '';
+  const skuText = p && p.sku ? String(p.sku) : '';
+  const inStock = !!(p && p.inStock);
+
+  if (priceText) {
+    const priceSpan = el('span', { style: { fontWeight: '600', opacity: '0.95' } }, [priceText]);
+    frag.appendChild(priceSpan);
+  }
+
+  if (skuText) {
+    if (priceText) frag.appendChild(document.createTextNode(' · '));
+    const skuSpan = el('span', { style: { opacity: '0.75' } }, [`SKU: ${skuText}`]);
+    frag.appendChild(skuSpan);
+  }
+
+  // Stock (always show)
+  if (priceText || skuText) frag.appendChild(document.createTextNode(' · '));
+  const stockSpan = el(
+    'span',
+    { style: { fontWeight: '600', color: inStock ? '#2e7d32' : '#c62828' } },
+    [inStock ? 'In Stock' : 'Out of Stock']
+  );
+  frag.appendChild(stockSpan);
+
+  return frag;
 }
 
 function getResultRows() {
@@ -358,7 +393,7 @@ function renderResults(payload) {
       dd.appendChild(
         itemRow({
           titleNode: highlightNode(p.name || "Product", q),
-          subtitle: p.price ? String(p.price) : p.sku ? `SKU: ${p.sku}` : "",
+          metaNode: buildProductMetaNode(p),
           thumb: p.thumb || null,
           href: p.url || "#",
         })

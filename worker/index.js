@@ -139,6 +139,9 @@ function trimProducts(items = []) {
       sku: p?.sku || null,
       name: p?.name || '',
       price: price ?? null,
+      inStock: typeof p?.quantity === 'number'
+        ? p.quantity > 0
+        : p?.inStock === true,
       thumb: thumb || null,
       url,
     };
