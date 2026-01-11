@@ -512,39 +512,6 @@ function bindGlobalHandlers() {
     true
   );
 
-  // Navigate when clicking a dropdown item
-  document.addEventListener(
-    "click",
-    (e) => {
-      const dd = LS.dd;
-      if (!dd) return;
-      const a = e.target && e.target.closest ? e.target.closest("#ecwid-live-search-dd a") : null;
-      if (!a) return;
-
-      const href = a.href || a.getAttribute("href");
-      if (!href) return;
-
-      const isCoarse = (() => {
-        try {
-          return window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-        } catch {
-          return false;
-        }
-      })();
-
-      if (isCoarse) {
-        // Mobile/touch: allow native <a> navigation. Do not interfere.
-        return;
-      }
-
-      // Desktop: programmatic navigation is fine.
-      e.preventDefault();
-      e.stopPropagation();
-      window.location.assign(href);
-    },
-    true
-  );
-
   // Focus-based polling trigger (works even if input events are suppressed)
   document.addEventListener(
     "focusin",
@@ -598,10 +565,21 @@ function bindGlobalHandlers() {
       }
 
       if (e.key === "Enter") {
-        const href = getActiveHref();
-        if (!href) return;
+        const rows = getResultRows();
+        if (!rows.length) return;
+        const idx = LS.activeIndex;
+        if (idx < 0 || idx >= rows.length) return;
+
+        const a = rows[idx];
+        if (!a) return;
+
+        // Prevent form submit, but let navigation happen via native anchor behavior.
         e.preventDefault();
-        window.location.assign(href);
+
+        try {
+          a.focus();
+          a.click();
+        } catch {}
       }
     },
     true
