@@ -496,6 +496,21 @@ function bindGlobalHandlers() {
   if (LS.docHandlersBound) return;
   LS.docHandlersBound = true;
 
+  // Close dropdown when clicking outside
+  document.addEventListener(
+    "click",
+    (e) => {
+      const input = LS.activeInput;
+      const dd = LS.dd;
+      if (!input || !dd) return;
+
+      if (e.target === input) return;
+      if (dd.contains(e.target)) return;
+
+      hideDropdown({ clear: false });
+    },
+    true
+  );
 
   // Focus-based polling trigger (works even if input events are suppressed)
   document.addEventListener(
