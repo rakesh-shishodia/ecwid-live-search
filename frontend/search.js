@@ -21,38 +21,6 @@ const CONFIG = {
   loadingDelayMs: 120,
 };
 
-// ===== TEMP MOBILE DIAGNOSTICS =====
-window.__LS_LOGS = window.__LS_LOGS || [];
-
-function lsLog(msg, data = {}) {
-  const entry = { t: Date.now(), msg, ...data };
-  window.__LS_LOGS.push(entry);
-  try {
-    console.log('[LS-DIAG]', msg, data);
-  } catch {}
-}
-
-// Capture event order and targets (capture phase is critical)
-['touchstart', 'touchend', 'pointerdown', 'pointerup', 'click', 'focusout', 'blur'].forEach((evt) => {
-  document.addEventListener(
-    evt,
-    (e) => {
-      const t = e.target;
-      const a = t && t.closest ? t.closest('a') : null;
-      lsLog(evt, {
-        tag: t && t.tagName,
-        cls: t && t.className,
-        href: t && t.getAttribute ? t.getAttribute('href') : null,
-        closestAHref: a ? (a.getAttribute('href') || a.href) : null,
-        closestATag: a ? a.tagName : null,
-        insideDropdown: !!(LS.dd && t && LS.dd.contains(t)),
-        defaultPrevented: !!e.defaultPrevented,
-      });
-    },
-    true
-  );
-});
-// ===== END TEMP MOBILE DIAGNOSTICS =====
 
 // Fallback icon for categories when no image is provided
 const CATEGORY_FALLBACK_THUMB =
@@ -166,7 +134,6 @@ function positionDropdown(anchorInput) {
 }
 
 function hideDropdown({ clear = true } = {}) {
-  lsLog('hideDropdown()', { clear, hasDd: !!LS.dd, hasActiveInput: !!LS.activeInput });
   if (!LS.dd) return;
   hideInlineLoading();
   LS.dd.style.display = "none";
@@ -539,7 +506,6 @@ function bindGlobalHandlers() {
     const t = e.target;
     if (t && dd.contains(t)) {
       LS.tapSuppressUntil = Date.now() + 700; // ms; enough for iOS to commit link tap
-      try { lsLog('tapInsideDropdown', { until: LS.tapSuppressUntil, tag: t.tagName }); } catch {}
     }
   };
 
@@ -565,8 +531,6 @@ function bindGlobalHandlers() {
       // Lock to avoid double-trigger
       LS.navLockUntil = now + 1500;
 
-      try { lsLog('touchendNavigate', { href }); } catch {}
-
       // Navigate explicitly (iOS overlay can swallow the anchor click)
       window.location.href = href;
     },
@@ -579,7 +543,6 @@ function bindGlobalHandlers() {
     (e) => {
       // If a tap started inside dropdown very recently, ignore this click (mobile blur retargets to BODY).
       if (LS.tapSuppressUntil && Date.now() < LS.tapSuppressUntil) {
-        try { lsLog('outsideClickSuppressed', { target: e.target && e.target.tagName }); } catch {}
         return;
       }
       const input = LS.activeInput;
