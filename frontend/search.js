@@ -38,10 +38,14 @@ function lsLog(msg, data = {}) {
     evt,
     (e) => {
       const t = e.target;
+      const a = t && t.closest ? t.closest('a') : null;
       lsLog(evt, {
         tag: t && t.tagName,
         cls: t && t.className,
         href: t && t.getAttribute ? t.getAttribute('href') : null,
+        closestAHref: a ? (a.getAttribute('href') || a.href) : null,
+        closestATag: a ? a.tagName : null,
+        insideDropdown: !!(LS.dd && t && LS.dd.contains(t)),
         defaultPrevented: !!e.defaultPrevented,
       });
     },
