@@ -21,7 +21,6 @@ const CONFIG = {
   loadingDelayMs: 120,
 };
 
-
 // Fallback icon for categories when no image is provided
 const CATEGORY_FALLBACK_THUMB =
   "data:image/svg+xml;utf8," +
@@ -47,11 +46,7 @@ const LS = {
 };
 
 function isDesktopPointer() {
-  try {
-    return window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-  } catch {
-    return true;
-  }
+  return !!(window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches);
 }
 
 function debounce(fn, wait) {
@@ -321,13 +316,6 @@ function setActiveRow(index) {
   try {
     rows[clamped].scrollIntoView({ block: "nearest" });
   } catch {}
-}
-
-function getActiveHref() {
-  const rows = getResultRows();
-  if (LS.activeIndex < 0 || LS.activeIndex >= rows.length) return null;
-  const a = rows[LS.activeIndex];
-  return a ? a.href || a.getAttribute("href") : null;
 }
 
 /**
@@ -642,9 +630,7 @@ function bindGlobalHandlers() {
 function warmWorkerOnce() {
   if (LS.warmCalled) return;
   LS.warmCalled = true;
-  try {
-    fetch(`${WORKER_BASE_URL.replace(/\/$/, "")}/warm`, { method: "GET", mode: "cors" }).catch(() => {});
-  } catch {}
+  fetch(`${WORKER_BASE_URL.replace(/\/$/, "")}/warm`, { method: "GET", mode: "cors" }).catch(() => {});
 }
 
 /**
