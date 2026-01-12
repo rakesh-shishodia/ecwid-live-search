@@ -75,6 +75,7 @@ const LS = {
   docHandlersBound: false,
   warmCalled: false,
   tapSuppressUntil: 0,
+  navLockUntil: 0,
 };
 
 function isDesktopPointer() {
@@ -544,6 +545,33 @@ function bindGlobalHandlers() {
 
   document.addEventListener('pointerdown', markTapInside, true);
   document.addEventListener('touchstart', markTapInside, true);
+
+  // iOS fallback: sometimes no click is dispatched on the anchor; navigate on touchend.
+  document.addEventListener(
+    'touchend',
+    (e) => {
+      const dd = LS.dd;
+      if (!dd) return;
+      const t = e.target;
+      if (!t || !dd.contains(t)) return;
+
+      const now = Date.now();
+      if (LS.navLockUntil && now < LS.navLockUntil) return;
+
+      const a = t.closest ? t.closest('a') : null;
+      const href = a ? (a.getAttribute('href') || a.href) : null;
+      if (!href) return;
+
+      // Lock to avoid double-trigger
+      LS.navLockUntil = now + 1500;
+
+      try { lsLog('touchendNavigate', { href }); } catch {}
+
+      // Navigate explicitly (iOS overlay can swallow the anchor click)
+      window.location.href = href;
+    },
+    true
+  );
 
   // Close dropdown when clicking outside
   document.addEventListener(
