@@ -201,21 +201,21 @@ function highlightNode(text, q) {
 }
 
 function itemRow({ titleNode, subtitle, metaNode = null, thumb, href }) {
-  const row = el("a", {
-    href,
+  const row = el("div", {
     style: {
       display: "flex",
       gap: "10px",
       alignItems: "center",
       padding: "10px 12px",
-      textDecoration: "none",
-      color: "#111",
+      cursor: "default",
     },
   });
 
   row.dataset.lsRow = "1";
 
-  const img = el("div", {
+  // Image anchor
+  const imgLink = el("a", {
+    href,
     style: {
       width: "42px",
       height: "42px",
@@ -236,23 +236,41 @@ function itemRow({ titleNode, subtitle, metaNode = null, thumb, href }) {
     im.style.width = "100%";
     im.style.height = "100%";
     im.style.objectFit = "cover";
-    img.appendChild(im);
+    imgLink.appendChild(im);
   }
 
   const text = el("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } });
+
+  // Title anchor
   const titleDiv = el("div", { style: { fontSize: "13px", fontWeight: "600" } });
-  titleDiv.appendChild(titleNode || document.createTextNode(""));
+  const titleLink = el("a", {
+    href,
+    style: {
+      color: "#111",
+      textDecoration: "none",
+    },
+  });
+  titleLink.appendChild(titleNode || document.createTextNode(""));
+  titleDiv.appendChild(titleLink);
   text.appendChild(titleDiv);
 
   if (metaNode) {
-    const metaDiv = el('div', { style: { fontSize: '12px', opacity: '0.85', display: 'flex', flexWrap: 'wrap', gap: '8px' } });
+    const metaDiv = el("div", {
+      style: {
+        fontSize: "12px",
+        opacity: "0.85",
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "8px",
+      },
+    });
     metaDiv.appendChild(metaNode);
     text.appendChild(metaDiv);
   } else if (subtitle) {
     text.appendChild(el("div", { style: { fontSize: "12px", opacity: "0.75" } }, [subtitle]));
   }
 
-  row.appendChild(img);
+  row.appendChild(imgLink);
   row.appendChild(text);
 
   // Desktop hover updates active selection
