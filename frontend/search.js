@@ -70,6 +70,7 @@ const LS = {
   activeIndex: -1,
   docHandlersBound: false,
   warmCalled: false,
+  tapSuppressUntil: 0,
 };
 
 function isDesktopPointer() {
@@ -526,10 +527,29 @@ function bindGlobalHandlers() {
   if (LS.docHandlersBound) return;
   LS.docHandlersBound = true;
 
+  // Mobile fix: if a tap starts inside the dropdown, suppress outside-close briefly.
+  const markTapInside = (e) => {
+    const dd = LS.dd;
+    if (!dd) return;
+    const t = e.target;
+    if (t && dd.contains(t)) {
+      LS.tapSuppressUntil = Date.now() + 700; // ms; enough for iOS to commit link tap
+      try { lsLog('tapInsideDropdown', { until: LS.tapSuppressUntil, tag: t.tagName }); } catch {}
+    }
+  };
+
+  document.addEventListener('pointerdown', markTapInside, true);
+  document.addEventListener('touchstart', markTapInside, true);
+
   // Close dropdown when clicking outside
   document.addEventListener(
     "click",
     (e) => {
+      // If a tap started inside dropdown very recently, ignore this click (mobile blur retargets to BODY).
+      if (LS.tapSuppressUntil && Date.now() < LS.tapSuppressUntil) {
+        try { lsLog('outsideClickSuppressed', { target: e.target && e.target.tagName }); } catch {}
+        return;
+      }
       const input = LS.activeInput;
       const dd = LS.dd;
       if (!input || !dd) return;
@@ -564,7 +584,12 @@ function bindGlobalHandlers() {
       if (!t.classList || !t.classList.contains("ins-header__search-field")) return;
       if (t.name !== "keyword") return;
 
-      stopPolling();
+      if (LS.tapSuppressUntil && Date.now() < LS.tapSuppressUntil) {
+        // Delay stopPolling slightly so dropdown tap can complete.
+        setTimeout(() => stopPolling(), 250);
+      } else {
+        stopPolling();
+      }
     },
     true
   );
