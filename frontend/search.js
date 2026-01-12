@@ -21,6 +21,35 @@ const CONFIG = {
   loadingDelayMs: 120,
 };
 
+// ===== TEMP MOBILE DIAGNOSTICS =====
+window.__LS_LOGS = window.__LS_LOGS || [];
+
+function lsLog(msg, data = {}) {
+  const entry = { t: Date.now(), msg, ...data };
+  window.__LS_LOGS.push(entry);
+  try {
+    console.log('[LS-DIAG]', msg, data);
+  } catch {}
+}
+
+// Capture event order and targets (capture phase is critical)
+['touchstart', 'touchend', 'pointerdown', 'pointerup', 'click', 'focusout', 'blur'].forEach((evt) => {
+  document.addEventListener(
+    evt,
+    (e) => {
+      const t = e.target;
+      lsLog(evt, {
+        tag: t && t.tagName,
+        cls: t && t.className,
+        href: t && t.getAttribute ? t.getAttribute('href') : null,
+        defaultPrevented: !!e.defaultPrevented,
+      });
+    },
+    true
+  );
+});
+// ===== END TEMP MOBILE DIAGNOSTICS =====
+
 // Fallback icon for categories when no image is provided
 const CATEGORY_FALLBACK_THUMB =
   "data:image/svg+xml;utf8," +
@@ -131,6 +160,7 @@ function positionDropdown(anchorInput) {
 }
 
 function hideDropdown({ clear = true } = {}) {
+  lsLog('hideDropdown()', { clear, hasDd: !!LS.dd, hasActiveInput: !!LS.activeInput });
   if (!LS.dd) return;
   hideInlineLoading();
   LS.dd.style.display = "none";
@@ -201,21 +231,21 @@ function highlightNode(text, q) {
 }
 
 function itemRow({ titleNode, subtitle, metaNode = null, thumb, href }) {
-  const row = el("div", {
+  const row = el("a", {
+    href,
     style: {
       display: "flex",
       gap: "10px",
       alignItems: "center",
       padding: "10px 12px",
-      cursor: "default",
+      textDecoration: "none",
+      color: "#111",
     },
   });
 
   row.dataset.lsRow = "1";
 
-  // Image anchor
-  const imgLink = el("a", {
-    href,
+  const img = el("div", {
     style: {
       width: "42px",
       height: "42px",
@@ -236,41 +266,23 @@ function itemRow({ titleNode, subtitle, metaNode = null, thumb, href }) {
     im.style.width = "100%";
     im.style.height = "100%";
     im.style.objectFit = "cover";
-    imgLink.appendChild(im);
+    img.appendChild(im);
   }
 
   const text = el("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } });
-
-  // Title anchor
   const titleDiv = el("div", { style: { fontSize: "13px", fontWeight: "600" } });
-  const titleLink = el("a", {
-    href,
-    style: {
-      color: "#111",
-      textDecoration: "none",
-    },
-  });
-  titleLink.appendChild(titleNode || document.createTextNode(""));
-  titleDiv.appendChild(titleLink);
+  titleDiv.appendChild(titleNode || document.createTextNode(""));
   text.appendChild(titleDiv);
 
   if (metaNode) {
-    const metaDiv = el("div", {
-      style: {
-        fontSize: "12px",
-        opacity: "0.85",
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "8px",
-      },
-    });
+    const metaDiv = el('div', { style: { fontSize: '12px', opacity: '0.85', display: 'flex', flexWrap: 'wrap', gap: '8px' } });
     metaDiv.appendChild(metaNode);
     text.appendChild(metaDiv);
   } else if (subtitle) {
     text.appendChild(el("div", { style: { fontSize: "12px", opacity: "0.75" } }, [subtitle]));
   }
 
-  row.appendChild(imgLink);
+  row.appendChild(img);
   row.appendChild(text);
 
   // Desktop hover updates active selection
