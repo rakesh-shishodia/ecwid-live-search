@@ -1,3 +1,4 @@
+/Users/rakeshshishodia/ecwid-live-search/worker/index.js
 /**
  * Ecwid Live Search – Cloudflare Worker proxy
  *
@@ -139,9 +140,9 @@ function trimProducts(items = []) {
       sku: p?.sku || null,
       name: p?.name || '',
       price: price ?? null,
-      inStock: typeof p?.quantity === 'number'
-        ? p.quantity > 0
-        : p?.inStock === true,
+      inStock: typeof p?.inStock === 'boolean'
+        ? p.inStock
+        : (typeof p?.quantity === 'number' ? p.quantity > 0 : false),
       thumb: thumb || null,
       url,
     };
