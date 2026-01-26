@@ -1,3 +1,12 @@
+// Helper to style the search input as per design
+function applySearchInputAppearance(input) {
+  if (!input) return;
+  if (input.dataset.lsStyled === "1") return;
+  input.style.backgroundColor = "#FFFFFF";
+  input.style.color = "#808080";
+  input.setAttribute("placeholder", "What are you searching for today?");
+  input.dataset.lsStyled = "1";
+}
 /**
  * 3DP Live Search – Ecwid storefront injection script
  *
@@ -455,6 +464,7 @@ const runSearch = debounce(async () => {
  * Runs only while the search input is focused.
  */
 function startPolling(input) {
+  applySearchInputAppearance(input);
   LS.activeInput = input;
   LS.lastValue = input.value || "";
   ensureDropdown(input);
@@ -554,6 +564,7 @@ function bindGlobalHandlers() {
       if (!t.classList || !t.classList.contains("ins-header__search-field")) return;
       if (t.name !== "keyword") return;
 
+      applySearchInputAppearance(t);
       startPolling(t);
     },
     true
@@ -645,6 +656,7 @@ function warmWorkerOnce() {
   setInterval(() => {
     const input = findSearchInput();
     if (input) {
+      applySearchInputAppearance(input);
       // If user is currently focused in the search box, keep the anchor updated
       if (document.activeElement === input) {
         LS.activeInput = input;
