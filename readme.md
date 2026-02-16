@@ -119,6 +119,56 @@ Assume:
 
 ---
 
+## Mobile: Scroll inside dropdown caused random product opens (tap vs scroll bug)
+
+### Symptom
+On iPhone/mobile, when the live-search dropdown opens (fullscreen overlay), trying to **scroll the results** would often **open a random product** (typically the item under the finger when the scroll gesture started).  
+This happened even when starting the scroll on padding / non-clickable areas. Scrolling outside the dropdown did not trigger it.
+
+### Root cause
+We had an iOS-friendly navigation fallback implemented using a **capture** `touchend` handler on `document`:
+
+- If `touchend` happened inside the dropdown (`LS.dd`), it attempted to navigate to `closest('a')`.
+- On iOS, a scroll gesture still ends with `touchend`.
+- Because we did not distinguish **tap** vs **scroll**, the fallback treated many scroll gestures as taps and navigated.
+
+In short: **touchend != tap**. We needed a tap/scroll discriminator.
+
+### Fix (implemented in `frontend/search.js`)
+We introduced **tap-vs-scroll gating** for dropdown interactions only:
+
+1. Added LS state:
+   - `touchStartX`, `touchStartY`
+   - `touchMoved` (boolean)
+   - `touchStartScrollTop`
+   - `touchTarget`
+
+2. On `touchstart` (capture), when inside dropdown:
+   - record start X/Y
+   - record dropdown `scrollTop`
+   - reset `touchMoved = false`
+
+3. On `touchmove` (capture), when inside dropdown:
+   - compute `dx/dy`
+   - if movement exceeds threshold (10px) **OR** `scrollTop` changes, set `touchMoved = true`
+
+4. On `touchend` (capture), when inside dropdown:
+   - **if `touchMoved === true` -> return; do not navigate**
+   - else (actual tap), proceed with existing anchor navigation / nav-lock rules
+
+### Notes / Constraints
+- This change is intentionally **mobile-only** (touch events) and does not alter desktop click behavior.
+- We did not change rendering, search logic, keyboard navigation, dropdown layout, or outside-click close logic.
+- Threshold used: **10px** movement to treat as scroll (can be tuned if needed).
+
+### Quick test checklist
+- Mobile: open search, scroll results slowly and fast -> **no accidental opens**
+- Mobile: tap product image/title -> **opens product**
+- Mobile: tap outside dropdown -> close behavior unchanged
+- Desktop: click results -> unchanged
+
+---
+
 ## Deployment Notes
 
 ### Frontend
