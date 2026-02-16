@@ -1,4 +1,3 @@
-/Users/rakeshshishodia/ecwid-live-search/worker/index.js
 /**
  * Ecwid Live Search – Cloudflare Worker proxy
  *
