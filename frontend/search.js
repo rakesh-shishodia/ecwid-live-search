@@ -52,6 +52,11 @@ const LS = {
   warmCalled: false,
   tapSuppressUntil: 0,
   navLockUntil: 0,
+  touchStartX: 0,
+  touchStartY: 0,
+  touchMoved: false,
+  touchStartScrollTop: 0,
+  touchTarget: null,
 };
 
 function isDesktopPointer() {
@@ -509,6 +514,40 @@ function bindGlobalHandlers() {
 
   document.addEventListener('pointerdown', markTapInside, true);
   document.addEventListener('touchstart', markTapInside, true);
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      const dd = LS.dd;
+      if (!dd) return;
+      const t = e.target;
+      if (!t || !dd.contains(t)) return;
+      const touch = e.touches && e.touches[0];
+      if (!touch) return;
+      LS.touchStartX = touch.clientX;
+      LS.touchStartY = touch.clientY;
+      LS.touchStartScrollTop = dd.scrollTop || 0;
+      LS.touchMoved = false;
+      LS.touchTarget = t;
+    },
+    true
+  );
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      const dd = LS.dd;
+      if (!dd) return;
+      const t = e.target;
+      if (!t || !dd.contains(t)) return;
+      const touch = e.touches && e.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - LS.touchStartX;
+      const dy = touch.clientY - LS.touchStartY;
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10 || dd.scrollTop !== LS.touchStartScrollTop) {
+        LS.touchMoved = true;
+      }
+    },
+    true
+  );
 
   // iOS fallback: sometimes no click is dispatched on the anchor; navigate on touchend.
   document.addEventListener(
@@ -518,6 +557,7 @@ function bindGlobalHandlers() {
       if (!dd) return;
       const t = e.target;
       if (!t || !dd.contains(t)) return;
+      if (LS.touchMoved) return;
 
       const now = Date.now();
       if (LS.navLockUntil && now < LS.navLockUntil) return;
