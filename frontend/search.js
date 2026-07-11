@@ -29,6 +29,7 @@ const CONFIG = {
   dropdownOffsetPx: 8,
   loadingDelayMs: 120,
   useEcwidInternalNavigationDesktop: true,
+  useEcwidInternalNavigationMobile: true,
 };
 
 // Fallback icon for categories when no image is provided
@@ -620,10 +621,33 @@ function bindGlobalHandlers() {
       // Lock to avoid double-trigger
       LS.navLockUntil = now + 1500;
 
+      const productId = a.dataset.lsProductId ? Number(a.dataset.lsProductId) : null;
+      const ecwid = window.Ecwid;
+      if (
+        CONFIG.useEcwidInternalNavigationMobile &&
+        Number.isFinite(productId) &&
+        ecwid &&
+        typeof ecwid.openPage === 'function'
+      ) {
+        const params = { id: productId };
+        if (a.dataset.lsProductName) params.name = a.dataset.lsProductName;
+
+        // Suppress the synthetic click so it cannot trigger a second, full-page navigation.
+        e.preventDefault();
+        try {
+          if (window.performance && typeof window.performance.mark === 'function') {
+            window.performance.mark('ls-ecwid-product-navigation-mobile-start');
+          }
+          hideDropdown({ clear: false });
+          ecwid.openPage('product', params);
+          return;
+        } catch {}
+      }
+
       // Navigate explicitly (iOS overlay can swallow the anchor click)
       window.location.href = href;
     },
-    true
+    { capture: true, passive: false }
   );
 
   // Close dropdown when clicking outside
