@@ -28,6 +28,7 @@ const CONFIG = {
   maxCategories: 6,
   dropdownOffsetPx: 8,
   loadingDelayMs: 120,
+  useEcwidInternalNavigationDesktop: true,
 };
 
 // Fallback icon for categories when no image is provided
@@ -212,7 +213,7 @@ function highlightNode(text, q) {
   return frag;
 }
 
-function itemRow({ titleNode, subtitle, metaNode = null, thumb, href }) {
+function itemRow({ titleNode, subtitle, metaNode = null, thumb, href, productId = null, productName = "" }) {
   const row = el("a", {
     href,
     style: {
@@ -226,6 +227,38 @@ function itemRow({ titleNode, subtitle, metaNode = null, thumb, href }) {
   });
 
   row.dataset.lsRow = "1";
+  if (productId !== null && productId !== undefined) {
+    row.dataset.lsProductId = String(productId);
+    row.dataset.lsProductName = productName;
+  }
+
+  row.addEventListener("click", (e) => {
+    if (!CONFIG.useEcwidInternalNavigationDesktop || !isDesktopPointer()) return;
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (e.detail === 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!row.dataset.lsProductId) return;
+
+    const ecwid = window.Ecwid;
+    if (!ecwid || typeof ecwid.openPage !== "function") return;
+
+    const id = Number(row.dataset.lsProductId);
+    if (!Number.isFinite(id)) return;
+
+    const params = { id };
+    if (row.dataset.lsProductName) params.name = row.dataset.lsProductName;
+
+    e.preventDefault();
+    try {
+      if (window.performance && typeof window.performance.mark === "function") {
+        window.performance.mark("ls-ecwid-product-navigation-start");
+      }
+      hideDropdown({ clear: false });
+      ecwid.openPage("product", params);
+    } catch {
+      window.location.href = row.href;
+    }
+  });
 
   const img = el("div", {
     style: {
@@ -401,6 +434,8 @@ function renderResults(payload) {
           metaNode: buildProductMetaNode(p),
           thumb: p.thumb || null,
           href: p.url || "#",
+          productId: p.id,
+          productName: p.name || "",
         })
       );
     }
