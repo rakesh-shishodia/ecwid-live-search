@@ -638,6 +638,9 @@ function bindGlobalHandlers() {
           if (window.performance && typeof window.performance.mark === 'function') {
             window.performance.mark('ls-ecwid-product-navigation-mobile-start');
           }
+          if (LS.activeInput && typeof LS.activeInput.blur === 'function') {
+            LS.activeInput.blur();
+          }
           hideDropdown({ clear: false });
           ecwid.openPage('product', params);
           return;
