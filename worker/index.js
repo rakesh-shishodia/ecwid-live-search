@@ -16,7 +16,7 @@ const ECWID_API_BASE = 'https://app.ecwid.com/api/v3';
 let _catCache = { ts: 0, items: [] };
 const CAT_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-function jsonResponse(data, { status = 200, origin = '*' } = {}) {
+function jsonResponse(data, { status = 200, origin = '*', extraHeaders = {} } = {}) {
   const headers = new Headers({
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -24,6 +24,9 @@ function jsonResponse(data, { status = 200, origin = '*' } = {}) {
     'Access-Control-Allow-Methods': 'GET,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   });
+  for (const [name, value] of Object.entries(extraHeaders)) {
+    headers.set(name, value);
+  }
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -160,6 +163,9 @@ async function handleSearch(request, env) {
   }
 
   const keyword = encodeURIComponent(`${q}*`);
+  const responseFields = encodeURIComponent(
+    'items(id,sku,name,defaultDisplayedPriceFormatted,price,inStock,quantity,thumbnailUrl,url,cleanUrl,media(images(image160pxUrl)))'
+  );
 
   const params = [
     `keyword=${keyword}`,
@@ -169,20 +175,41 @@ async function handleSearch(request, env) {
     'sortBy=RELEVANCE',
     'limit=8',
     'cleanUrls=true',
+    `responseFields=${responseFields}`,
   ].join('&');
 
-  const data = await ecwidFetch(`/products?${params}`, env);
+  const searchStarted = performance.now();
+  let productsMs = 0;
+  let categoriesMs = 0;
+
+  const productsStarted = performance.now();
+  const productsPromise = ecwidFetch(`/products?${params}`, env).finally(() => {
+    productsMs = performance.now() - productsStarted;
+  });
+
+  const categoriesStarted = performance.now();
+  const categoriesPromise = getCategories(env)
+    .then((allCats) => matchCategories(allCats, q, 6))
+    .catch(() => [])
+    .finally(() => {
+      categoriesMs = performance.now() - categoriesStarted;
+    });
+
+  const [data, categories] = await Promise.all([productsPromise, categoriesPromise]);
   const products = trimProducts(Array.isArray(data?.items) ? data.items : []);
+  const totalMs = performance.now() - searchStarted;
 
-  let categories = [];
-  try {
-    const allCats = await getCategories(env);
-    categories = matchCategories(allCats, q, 6);
-  } catch {
-    categories = [];
-  }
-
-  return jsonResponse({ q, products, categories }, { origin });
+  return jsonResponse(
+    { q, products, categories },
+    {
+      origin,
+      extraHeaders: {
+        'Access-Control-Expose-Headers': 'Server-Timing',
+        'Server-Timing': `ecwid-products;dur=${productsMs.toFixed(1)}, categories;dur=${categoriesMs.toFixed(1)}, total;dur=${totalMs.toFixed(1)}`,
+        'Timing-Allow-Origin': origin,
+      },
+    }
+  );
 }
 
 export default {

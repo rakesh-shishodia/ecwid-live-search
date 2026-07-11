@@ -22,7 +22,7 @@ const WORKER_BASE_URL = "https://ecwid-live-search.shishodia-rakesh.workers.dev"
 
 const CONFIG = {
   minChars: 2,
-  debounceMs: 200,
+  debounceMs: 100,
   pollMs: 150,
   maxProducts: 8,
   maxCategories: 6,
@@ -501,6 +501,22 @@ function stopPolling() {
 function bindGlobalHandlers() {
   if (LS.docHandlersBound) return;
   LS.docHandlersBound = true;
+
+  // Use native input events for immediate searches; polling remains as an Ecwid fallback.
+  document.addEventListener(
+    "input",
+    (e) => {
+      const t = e.target;
+      if (!t || t.tagName !== "INPUT") return;
+      if (!t.classList || !t.classList.contains("ins-header__search-field")) return;
+      if (t.name !== "keyword") return;
+
+      startPolling(t);
+      LS.lastValue = t.value || "";
+      runSearch();
+    },
+    true
+  );
 
   // Mobile fix: if a tap starts inside the dropdown, suppress outside-close briefly.
   const markTapInside = (e) => {
