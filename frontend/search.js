@@ -214,7 +214,16 @@ function highlightNode(text, q) {
   return frag;
 }
 
-function itemRow({ titleNode, subtitle, metaNode = null, thumb, href, productId = null, productName = "" }) {
+function itemRow({
+  titleNode,
+  subtitle,
+  metaNode = null,
+  thumb,
+  href,
+  productId = null,
+  productName = "",
+  categoryId = null,
+}) {
   const row = el("a", {
     href,
     style: {
@@ -232,30 +241,41 @@ function itemRow({ titleNode, subtitle, metaNode = null, thumb, href, productId 
     row.dataset.lsProductId = String(productId);
     row.dataset.lsProductName = productName;
   }
+  if (categoryId !== null && categoryId !== undefined) {
+    row.dataset.lsCategoryId = String(categoryId);
+  }
 
   row.addEventListener("click", (e) => {
     if (!CONFIG.useEcwidInternalNavigationDesktop || !isDesktopPointer()) return;
     if (e.defaultPrevented || e.button !== 0) return;
     if (e.detail === 0) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    if (!row.dataset.lsProductId) return;
-
     const ecwid = window.Ecwid;
     if (!ecwid || typeof ecwid.openPage !== "function") return;
 
-    const id = Number(row.dataset.lsProductId);
-    if (!Number.isFinite(id)) return;
+    const productId = row.dataset.lsProductId ? Number(row.dataset.lsProductId) : null;
+    const categoryId = row.dataset.lsCategoryId ? Number(row.dataset.lsCategoryId) : null;
+    let page;
+    let params;
 
-    const params = { id };
-    if (row.dataset.lsProductName) params.name = row.dataset.lsProductName;
+    if (Number.isFinite(productId)) {
+      page = "product";
+      params = { id: productId };
+      if (row.dataset.lsProductName) params.name = row.dataset.lsProductName;
+    } else if (Number.isFinite(categoryId)) {
+      page = "category";
+      params = { id: categoryId };
+    } else {
+      return;
+    }
 
     e.preventDefault();
     try {
       if (window.performance && typeof window.performance.mark === "function") {
-        window.performance.mark("ls-ecwid-product-navigation-start");
+        window.performance.mark(`ls-ecwid-${page}-navigation-start`);
       }
       hideDropdown({ clear: false });
-      ecwid.openPage("product", params);
+      ecwid.openPage(page, params);
     } catch {
       window.location.href = row.href;
     }
@@ -451,6 +471,7 @@ function renderResults(payload) {
           subtitle: "Category",
           thumb: c.thumb || CATEGORY_FALLBACK_THUMB,
           href: c.url || "#",
+          categoryId: c.id,
         })
       );
     }
@@ -622,27 +643,29 @@ function bindGlobalHandlers() {
       LS.navLockUntil = now + 1500;
 
       const productId = a.dataset.lsProductId ? Number(a.dataset.lsProductId) : null;
+      const categoryId = a.dataset.lsCategoryId ? Number(a.dataset.lsCategoryId) : null;
       const ecwid = window.Ecwid;
       if (
         CONFIG.useEcwidInternalNavigationMobile &&
-        Number.isFinite(productId) &&
+        (Number.isFinite(productId) || Number.isFinite(categoryId)) &&
         ecwid &&
         typeof ecwid.openPage === 'function'
       ) {
-        const params = { id: productId };
-        if (a.dataset.lsProductName) params.name = a.dataset.lsProductName;
+        const page = Number.isFinite(productId) ? 'product' : 'category';
+        const params = { id: Number.isFinite(productId) ? productId : categoryId };
+        if (page === 'product' && a.dataset.lsProductName) params.name = a.dataset.lsProductName;
 
         // Suppress the synthetic click so it cannot trigger a second, full-page navigation.
         e.preventDefault();
         try {
           if (window.performance && typeof window.performance.mark === 'function') {
-            window.performance.mark('ls-ecwid-product-navigation-mobile-start');
+            window.performance.mark(`ls-ecwid-${page}-navigation-mobile-start`);
           }
           if (LS.activeInput && typeof LS.activeInput.blur === 'function') {
             LS.activeInput.blur();
           }
           hideDropdown({ clear: false });
-          ecwid.openPage('product', params);
+          ecwid.openPage(page, params);
           return;
         } catch {}
       }
