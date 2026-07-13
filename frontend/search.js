@@ -28,6 +28,8 @@ const CONFIG = {
   maxCategories: 6,
   dropdownOffsetPx: 8,
   loadingDelayMs: 120,
+  analyticsStableMs: 1000,
+  analyticsDedupeMs: 30000,
   useEcwidInternalNavigationDesktop: true,
   useEcwidInternalNavigationMobile: true,
 };
@@ -59,6 +61,9 @@ const LS = {
   touchMoved: false,
   touchStartScrollTop: 0,
   touchTarget: null,
+  analyticsTimer: null,
+  analyticsPending: null,
+  analyticsSentAt: new Map(),
 };
 
 function isDesktopPointer() {
@@ -246,6 +251,7 @@ function itemRow({
   }
 
   row.addEventListener("click", (e) => {
+    flushSearchAnalytics();
     if (!CONFIG.useEcwidInternalNavigationDesktop || !isDesktopPointer()) return;
     if (e.defaultPrevented || e.button !== 0) return;
     if (e.detail === 0) return;
@@ -427,6 +433,70 @@ async function fetchResults(q, signal) {
   return res.json();
 }
 
+function cancelPendingSearchAnalytics() {
+  if (LS.analyticsTimer) {
+    clearTimeout(LS.analyticsTimer);
+    LS.analyticsTimer = null;
+  }
+  LS.analyticsPending = null;
+}
+
+function scheduleSearchAnalytics(query, productCount, categoryCount) {
+  cancelPendingSearchAnalytics();
+
+  const normalizedQuery = String(query || "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (normalizedQuery.length < CONFIG.minChars) return;
+
+  LS.analyticsPending = {
+    query: normalizedQuery,
+    productCount,
+    categoryCount,
+  };
+  LS.analyticsTimer = setTimeout(flushSearchAnalytics, CONFIG.analyticsStableMs);
+}
+
+function flushSearchAnalytics() {
+  if (LS.analyticsTimer) {
+    clearTimeout(LS.analyticsTimer);
+    LS.analyticsTimer = null;
+  }
+
+  const event = LS.analyticsPending;
+  LS.analyticsPending = null;
+  if (!event) return;
+
+  const now = Date.now();
+  const lastSent = LS.analyticsSentAt.get(event.query) || 0;
+  if (now - lastSent < CONFIG.analyticsDedupeMs) return;
+  LS.analyticsSentAt.set(event.query, now);
+
+  if (LS.analyticsSentAt.size > 100) {
+    for (const [query, sentAt] of LS.analyticsSentAt) {
+      if (now - sentAt >= CONFIG.analyticsDedupeMs) LS.analyticsSentAt.delete(query);
+    }
+  }
+
+  const url = `${WORKER_BASE_URL.replace(/\/$/, "")}/analytics/search`;
+  const body = JSON.stringify(event);
+  let sent = false;
+
+  try {
+    if (navigator.sendBeacon) {
+      sent = navigator.sendBeacon(url, new Blob([body], { type: "text/plain;charset=UTF-8" }));
+    }
+  } catch {}
+
+  if (!sent) {
+    fetch(url, {
+      method: "POST",
+      body,
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      keepalive: true,
+      mode: "cors",
+    }).catch(() => {});
+  }
+}
+
 function renderResults(payload) {
   const dd = LS.dd;
   if (!dd) return;
@@ -443,6 +513,7 @@ function renderResults(payload) {
   if (!products.length && !categories.length) {
     dd.appendChild(el("div", { style: { padding: "12px", fontSize: "13px", opacity: "0.8" } }, ["No results"]));
     dd.style.display = "block";
+    scheduleSearchAnalytics(q, 0, 0);
     return;
   }
 
@@ -478,6 +549,7 @@ function renderResults(payload) {
   }
 
   dd.style.display = "block";
+  scheduleSearchAnalytics(q, products.length, categories.length);
 }
 
 const runSearch = debounce(async () => {
@@ -488,9 +560,12 @@ const runSearch = debounce(async () => {
 
   const q = (input.value || "").trim();
   if (q.length < CONFIG.minChars) {
+    cancelPendingSearchAnalytics();
     hideDropdown({ clear: true });
     return;
   }
+
+  cancelPendingSearchAnalytics();
 
   // Abort previous request
   if (LS.abort) LS.abort.abort();
@@ -638,6 +713,8 @@ function bindGlobalHandlers() {
       const a = t.closest ? t.closest('a') : null;
       const href = a ? (a.getAttribute('href') || a.href) : null;
       if (!href) return;
+
+      flushSearchAnalytics();
 
       // Lock to avoid double-trigger
       LS.navLockUntil = now + 1500;

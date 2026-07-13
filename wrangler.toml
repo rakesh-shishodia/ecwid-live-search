@@ -4,6 +4,15 @@ compatibility_date = "2026-01-08"
 
 [vars]
 ECWID_STORE_ID = "2442119"
+ANALYTICS_ALLOWED_ORIGIN = "https://www.3dprintronics.com"
+
+[[d1_databases]]
+binding = "STATS_DB"
+database_name = "ecwid-live-search-stats"
+database_id = "3925eb08-d42f-40d2-a8aa-cb66a5deeee6"
+
+[triggers]
+crons = [ "17 2 * * *" ]
 
 [observability]
 enabled = true

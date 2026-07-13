@@ -188,6 +188,29 @@ If search stops working everywhere:
 - Rotate secrets in Cloudflare
 - Do **not** assume frontend regression first
 
+### Search statistics collection
+
+Search statistics use the `STATS_DB` Cloudflare D1 binding and the migration in
+`migrations/`. Collection is deliberately separate from `/search`:
+
+- The frontend reports only a stable, rendered query through `sendBeacon()` or a
+  non-blocking keepalive request.
+- Prefixes typed on the way to a final query are not counted.
+- The same normalized term is deduplicated for 30 seconds on the current page.
+- D1 stores one aggregate row per store, hour, and term. It does not store IPs,
+  customer IDs, sessions, or individual search-event rows.
+- Analytics failures never block search results or result navigation.
+- A daily Cron Trigger removes aggregate rows older than 31 days.
+
+Required D1 setup:
+
+```bash
+npx wrangler d1 migrations apply ecwid-live-search-stats --remote
+```
+
+The analytics endpoint accepts events only from the origin configured by
+`ANALYTICS_ALLOWED_ORIGIN`.
+
 ---
 
 ## Non-Goals (By Design)

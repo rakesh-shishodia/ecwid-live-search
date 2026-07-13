@@ -8,11 +8,15 @@
  *
  * OPTIONAL env vars:
  * - ALLOWED_ORIGIN   (e.g. https://www.3dprintronics.com)  // enables strict CORS
+ * - ANALYTICS_ALLOWED_ORIGIN // required origin for analytics events
  */
 
 const ECWID_API_BASE = 'https://app.ecwid.com/api/v3';
 const SEARCH_CACHE_TTL_SECONDS = 5 * 60;
 const SEARCH_CACHE_VERSION = 'v1';
+const ANALYTICS_RETENTION_DAYS = 31;
+const MAX_ANALYTICS_BODY_BYTES = 2048;
+const MAX_ANALYTICS_TERM_LENGTH = 120;
 
 // Simple in-memory categories cache (good enough for MVP)
 let _catCache = { ts: 0, items: [] };
@@ -23,7 +27,7 @@ function jsonResponse(data, { status = 200, origin = '*', extraHeaders = {} } = 
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   });
   for (const [name, value] of Object.entries(extraHeaders)) {
@@ -37,7 +41,7 @@ function okPreflight(origin = '*') {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Methods': 'GET,OPTIONS',
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',
     },
@@ -55,10 +59,128 @@ function getOrigin(request, env) {
   return '*';
 }
 
+function getAnalyticsOrigin(request, env) {
+  const reqOrigin = request.headers.get('Origin') || '';
+  const allowed = (env.ANALYTICS_ALLOWED_ORIGIN || env.ALLOWED_ORIGIN || '').trim();
+  return allowed && reqOrigin === allowed ? allowed : 'null';
+}
+
 function getQ(url) {
   const q = (url.searchParams.get('q') || '').trim();
   // Normalize whitespace
   return q.replace(/\s+/g, ' ');
+}
+
+function normalizeAnalyticsTerm(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function normalizeResultCount(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count)) return 0;
+  return Math.min(1000, Math.max(0, Math.trunc(count)));
+}
+
+function isLikelyEmail(value) {
+  return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(value);
+}
+
+async function recordSearchAnalytics(env, event) {
+  const storeId = (env.ECWID_STORE_ID || '').trim();
+  if (!storeId || !env.STATS_DB) throw new Error('Missing ECWID_STORE_ID or STATS_DB binding');
+
+  const now = Math.floor(Date.now() / 1000);
+  const hourStart = Math.floor(now / 3600) * 3600;
+  const noResult = event.productCount === 0 && event.categoryCount === 0 ? 1 : 0;
+
+  await env.STATS_DB.prepare(
+    `INSERT INTO search_terms_hourly (
+       store_id,
+       hour_start,
+       search_term,
+       search_count,
+       no_result_count,
+       product_result_total,
+       category_result_total,
+       last_searched_at
+     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+     ON CONFLICT (store_id, hour_start, search_term) DO UPDATE SET
+       search_count = search_count + 1,
+       no_result_count = no_result_count + excluded.no_result_count,
+       product_result_total = product_result_total + excluded.product_result_total,
+       category_result_total = category_result_total + excluded.category_result_total,
+       last_searched_at = excluded.last_searched_at`
+  )
+    .bind(
+      storeId,
+      hourStart,
+      event.term,
+      noResult,
+      event.productCount,
+      event.categoryCount,
+      now
+    )
+    .run();
+}
+
+async function handleSearchAnalytics(request, env, ctx) {
+  const origin = getAnalyticsOrigin(request, env);
+  if (origin === 'null') {
+    return jsonResponse({ error: 'CORS blocked' }, { status: 403, origin: 'null' });
+  }
+  if (!env.STATS_DB) {
+    return jsonResponse({ error: 'Analytics unavailable' }, { status: 503, origin });
+  }
+
+  const contentLength = Number(request.headers.get('Content-Length') || 0);
+  if (contentLength > MAX_ANALYTICS_BODY_BYTES) {
+    return jsonResponse({ error: 'Payload too large' }, { status: 413, origin });
+  }
+
+  const body = await request.text();
+  if (body.length > MAX_ANALYTICS_BODY_BYTES) {
+    return jsonResponse({ error: 'Payload too large' }, { status: 413, origin });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON' }, { status: 400, origin });
+  }
+
+  const term = normalizeAnalyticsTerm(payload?.query);
+  if (term.length < 2 || term.length > MAX_ANALYTICS_TERM_LENGTH || isLikelyEmail(term)) {
+    return jsonResponse({ error: 'Invalid search term' }, { status: 400, origin });
+  }
+
+  const event = {
+    term,
+    productCount: normalizeResultCount(payload?.productCount),
+    categoryCount: normalizeResultCount(payload?.categoryCount),
+  };
+
+  ctx.waitUntil(
+    recordSearchAnalytics(env, event).catch((err) => {
+      console.error({
+        event: 'search_analytics_error',
+        message: err?.message || String(err),
+      });
+    })
+  );
+
+  return jsonResponse({ accepted: true }, { status: 202, origin });
+}
+
+async function deleteExpiredSearchAnalytics(env) {
+  if (!env.STATS_DB) return;
+  const cutoff = Math.floor(Date.now() / 1000) - ANALYTICS_RETENTION_DAYS * 24 * 60 * 60;
+  await env.STATS_DB.prepare('DELETE FROM search_terms_hourly WHERE hour_start < ?')
+    .bind(cutoff)
+    .run();
 }
 
 function getSearchCacheKey(request, q) {
@@ -311,18 +433,23 @@ async function handleCachedSearch(request, env, ctx) {
 
 export default {
   async fetch(request, env, ctx) {
-    const origin = getOrigin(request, env);
+    const url = new URL(request.url);
+    const origin = url.pathname === '/analytics/search'
+      ? getAnalyticsOrigin(request, env)
+      : getOrigin(request, env);
 
     if (request.method === 'OPTIONS') {
       if (origin === 'null') return okPreflight('null');
       return okPreflight(origin);
     }
 
-    const url = new URL(request.url);
-
     try {
       if (url.pathname === '/search' && request.method === 'GET') {
         return await handleCachedSearch(request, env, ctx);
+      }
+
+      if (url.pathname === '/analytics/search' && request.method === 'POST') {
+        return await handleSearchAnalytics(request, env, ctx);
       }
 
       // Warmup endpoint: primes category cache (reduces first-search latency)
@@ -345,5 +472,16 @@ export default {
         { status: 500, origin }
       );
     }
+  },
+
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(
+      deleteExpiredSearchAnalytics(env).catch((err) => {
+        console.error({
+          event: 'search_analytics_cleanup_error',
+          message: err?.message || String(err),
+        });
+      })
+    );
   },
 };
