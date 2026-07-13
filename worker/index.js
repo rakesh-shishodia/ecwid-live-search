@@ -11,6 +11,8 @@
  */
 
 const ECWID_API_BASE = 'https://app.ecwid.com/api/v3';
+const SEARCH_CACHE_TTL_SECONDS = 5 * 60;
+const SEARCH_CACHE_VERSION = 'v1';
 
 // Simple in-memory categories cache (good enough for MVP)
 let _catCache = { ts: 0, items: [] };
@@ -57,6 +59,41 @@ function getQ(url) {
   const q = (url.searchParams.get('q') || '').trim();
   // Normalize whitespace
   return q.replace(/\s+/g, ' ');
+}
+
+function getSearchCacheKey(request, q) {
+  const cacheUrl = new URL(request.url);
+  cacheUrl.pathname = `/_cache/search/${SEARCH_CACHE_VERSION}`;
+  cacheUrl.search = '';
+  cacheUrl.searchParams.set('q', q.toLowerCase());
+  return new Request(cacheUrl.toString(), { method: 'GET' });
+}
+
+function withSearchCacheStatus(response, cacheStatus, cacheMs, preserveTiming = false) {
+  const headers = new Headers(response.headers);
+  const cacheTiming = `cache;desc="${cacheStatus}";dur=${cacheMs.toFixed(1)}`;
+  const existingTiming = preserveTiming ? headers.get('Server-Timing') : null;
+
+  headers.set('Cache-Control', 'no-store');
+  headers.set('Access-Control-Expose-Headers', 'Server-Timing, X-Search-Cache');
+  headers.set('X-Search-Cache', cacheStatus);
+  headers.set('Server-Timing', existingTiming ? `${cacheTiming}, ${existingTiming}` : cacheTiming);
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function logSearchCache(cacheStatus, q, started, responseStatus) {
+  console.log({
+    event: 'search_cache',
+    cacheStatus,
+    queryLength: q.length,
+    durationMs: Math.round(performance.now() - started),
+    responseStatus,
+  });
 }
 
 async function ecwidFetch(path, env) {
@@ -212,8 +249,68 @@ async function handleSearch(request, env) {
   );
 }
 
+async function handleCachedSearch(request, env, ctx) {
+  const origin = getOrigin(request, env);
+  const q = getQ(new URL(request.url));
+
+  // Preserve the existing validation response and never cache rejected origins.
+  if (origin === 'null' || q.length < 2) return handleSearch(request, env);
+
+  const started = performance.now();
+  const cacheKey = getSearchCacheKey(request, q);
+  let cache = null;
+  let cachedResponse;
+  const cacheStarted = performance.now();
+
+  try {
+    cache = caches.default;
+    cachedResponse = await cache.match(cacheKey);
+  } catch (err) {
+    console.error({
+      event: 'search_cache_error',
+      operation: 'match',
+      message: err?.message || String(err),
+    });
+  }
+
+  const cacheMs = performance.now() - cacheStarted;
+  if (cachedResponse) {
+    logSearchCache('HIT', q, started, cachedResponse.status);
+    return withSearchCacheStatus(cachedResponse, 'HIT', cacheMs);
+  }
+
+  const response = await handleSearch(request, env);
+
+  if (response.status === 200 && cache) {
+    const cacheSource = response.clone();
+    const cacheHeaders = new Headers(cacheSource.headers);
+    cacheHeaders.set('Cache-Control', `public, max-age=${SEARCH_CACHE_TTL_SECONDS}`);
+    cacheHeaders.delete('Server-Timing');
+    cacheHeaders.delete('X-Search-Cache');
+
+    const cacheResponse = new Response(cacheSource.body, {
+      status: cacheSource.status,
+      statusText: cacheSource.statusText,
+      headers: cacheHeaders,
+    });
+
+    ctx.waitUntil(
+      cache.put(cacheKey, cacheResponse).catch((err) => {
+        console.error({
+          event: 'search_cache_error',
+          operation: 'put',
+          message: err?.message || String(err),
+        });
+      })
+    );
+  }
+
+  logSearchCache('MISS', q, started, response.status);
+  return withSearchCacheStatus(response, 'MISS', cacheMs, true);
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = getOrigin(request, env);
 
     if (request.method === 'OPTIONS') {
@@ -225,7 +322,7 @@ export default {
 
     try {
       if (url.pathname === '/search' && request.method === 'GET') {
-        return await handleSearch(request, env);
+        return await handleCachedSearch(request, env, ctx);
       }
 
       // Warmup endpoint: primes category cache (reduces first-search latency)

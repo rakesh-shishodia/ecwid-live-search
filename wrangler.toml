@@ -4,3 +4,10 @@ compatibility_date = "2026-01-08"
 
 [vars]
 ECWID_STORE_ID = "2442119"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = false
