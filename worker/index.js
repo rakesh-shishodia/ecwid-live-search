@@ -9,7 +9,10 @@
  * OPTIONAL env vars:
  * - ALLOWED_ORIGIN   (e.g. https://www.3dprintronics.com)  // enables strict CORS
  * - ANALYTICS_ALLOWED_ORIGIN // required origin for analytics events
+ * - DASHBOARD_PASSWORD // protects the internal statistics dashboard
  */
+
+import { SEARCH_ANALYTICS_DASHBOARD_HTML } from './dashboard.js';
 
 const ECWID_API_BASE = 'https://app.ecwid.com/api/v3';
 const SEARCH_CACHE_TTL_SECONDS = 5 * 60;
@@ -86,6 +89,132 @@ function normalizeResultCount(value) {
 
 function isLikelyEmail(value) {
   return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(value);
+}
+
+function dashboardUnauthorized() {
+  return new Response('Authentication required', {
+    status: 401,
+    headers: {
+      'Cache-Control': 'no-store',
+      'WWW-Authenticate': 'Basic realm="Search Analytics", charset="UTF-8"',
+    },
+  });
+}
+
+function isDashboardAuthorized(request, env) {
+  const expectedPassword = (env.DASHBOARD_PASSWORD || '').trim();
+  if (!expectedPassword) return false;
+
+  const authorization = request.headers.get('Authorization') || '';
+  if (!authorization.startsWith('Basic ')) return false;
+
+  try {
+    const credentials = atob(authorization.slice(6));
+    const separator = credentials.indexOf(':');
+    if (separator < 0) return false;
+    const username = credentials.slice(0, separator);
+    const password = credentials.slice(separator + 1);
+    return username === 'admin' && password === expectedPassword;
+  } catch {
+    return false;
+  }
+}
+
+function dashboardHtmlResponse() {
+  return new Response(SEARCH_ANALYTICS_DASHBOARD_HTML, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    },
+  });
+}
+
+function mapAnalyticsTerm(row) {
+  return {
+    term: row.search_term,
+    searches: Number(row.searches || 0),
+    noResultSearches: Number(row.no_result_searches || 0),
+    lastSearchedIst: row.last_searched_ist,
+  };
+}
+
+async function handleAnalyticsStats(request, env) {
+  if (!env.STATS_DB) {
+    return jsonResponse({ error: 'Analytics unavailable' }, { status: 503 });
+  }
+
+  const requestedDays = Number(new URL(request.url).searchParams.get('days') || 1);
+  const days = [1, 7, 30].includes(requestedDays) ? requestedDays : 1;
+  const cutoffSeconds = days * 24 * 60 * 60;
+  const storeId = (env.ECWID_STORE_ID || '').trim();
+
+  const summaryStatement = env.STATS_DB.prepare(
+    `SELECT
+       COALESCE(SUM(search_count), 0) AS total_searches,
+       COUNT(DISTINCT search_term) AS unique_terms,
+       COALESCE(SUM(no_result_count), 0) AS no_result_searches
+     FROM search_terms_hourly
+     WHERE store_id = ? AND hour_start >= unixepoch() - ?`
+  ).bind(storeId, cutoffSeconds);
+
+  const popularStatement = env.STATS_DB.prepare(
+    `SELECT
+       search_term,
+       SUM(search_count) AS searches,
+       SUM(no_result_count) AS no_result_searches,
+       datetime(MAX(last_searched_at), 'unixepoch', '+5 hours', '+30 minutes') AS last_searched_ist
+     FROM search_terms_hourly
+     WHERE store_id = ? AND hour_start >= unixepoch() - ?
+     GROUP BY search_term
+     ORDER BY searches DESC, last_searched_at DESC
+     LIMIT 100`
+  ).bind(storeId, cutoffSeconds);
+
+  const noResultStatement = env.STATS_DB.prepare(
+    `SELECT
+       search_term,
+       SUM(search_count) AS searches,
+       SUM(no_result_count) AS no_result_searches,
+       datetime(MAX(last_searched_at), 'unixepoch', '+5 hours', '+30 minutes') AS last_searched_ist
+     FROM search_terms_hourly
+     WHERE store_id = ? AND hour_start >= unixepoch() - ?
+     GROUP BY search_term
+     HAVING SUM(no_result_count) > 0
+     ORDER BY no_result_searches DESC, searches DESC
+     LIMIT 100`
+  ).bind(storeId, cutoffSeconds);
+
+  const [summaryResult, popularResult, noResultResult] = await env.STATS_DB.batch([
+    summaryStatement,
+    popularStatement,
+    noResultStatement,
+  ]);
+  const summaryRow = summaryResult.results?.[0] || {};
+  const totalSearches = Number(summaryRow.total_searches || 0);
+  const noResultSearches = Number(summaryRow.no_result_searches || 0);
+
+  return jsonResponse({
+    periodDays: days,
+    periodLabel: days === 1 ? 'Last 24 hours' : `Last ${days} days`,
+    generatedAtIst: new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+      .toISOString()
+      .replace('T', ' ')
+      .slice(0, 19) + ' IST',
+    summary: {
+      totalSearches,
+      uniqueTerms: Number(summaryRow.unique_terms || 0),
+      noResultSearches,
+      noResultPercentage: totalSearches
+        ? Number(((noResultSearches / totalSearches) * 100).toFixed(1))
+        : 0,
+    },
+    popularTerms: (popularResult.results || []).map(mapAnalyticsTerm),
+    noResultTerms: (noResultResult.results || []).map(mapAnalyticsTerm),
+  });
 }
 
 async function recordSearchAnalytics(env, event) {
@@ -444,6 +573,21 @@ export default {
     }
 
     try {
+      if (
+        (url.pathname === '/analytics/dashboard' || url.pathname === '/analytics/stats') &&
+        !isDashboardAuthorized(request, env)
+      ) {
+        return dashboardUnauthorized();
+      }
+
+      if (url.pathname === '/analytics/dashboard' && request.method === 'GET') {
+        return dashboardHtmlResponse();
+      }
+
+      if (url.pathname === '/analytics/stats' && request.method === 'GET') {
+        return await handleAnalyticsStats(request, env);
+      }
+
       if (url.pathname === '/search' && request.method === 'GET') {
         return await handleCachedSearch(request, env, ctx);
       }

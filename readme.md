@@ -211,6 +211,18 @@ npx wrangler d1 migrations apply ecwid-live-search-stats --remote
 The analytics endpoint accepts events only from the origin configured by
 `ANALYTICS_ALLOWED_ORIGIN`.
 
+The internal dashboard is available at `/analytics/dashboard`. It reads D1 only
+when opened and does not add work to search requests or analytics collection.
+Protect it with a Cloudflare Worker secret and sign in with username `admin`:
+
+```bash
+npx wrangler secret put DASHBOARD_PASSWORD
+```
+
+The dashboard provides 24-hour, 7-day, and 30-day totals, popular terms, and
+queries that returned no results. Its JSON data route is `/analytics/stats` and
+uses the same HTTP Basic Authentication.
+
 ---
 
 ## Non-Goals (By Design)
